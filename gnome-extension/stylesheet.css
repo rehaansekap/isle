@@ -777,6 +777,9 @@
 .isle-notification-list { spacing: 2px; }
 
 /* A row each, as a list: the app's icon, who in white and what in grey on one line, then when. */
+.isle-notification-row-container {
+  margin: 1px 0;
+}
 .isle-notification-row {
   border-radius: 10px;
   transition-duration: 120ms;
@@ -784,12 +787,100 @@
 
 .isle-notification-row:hover { background-color: rgba(255, 255, 255, 0.06); }
 .isle-notification { spacing: 10px; padding: 6px 8px; }
+.isle-notification-click-area {
+  background-color: transparent;
+  border: none;
+  padding: 0;
+  text-align: left;
+}
+.isle-notification-title-box { spacing: 8px; }
+.isle-notification-body-button {
+  background-color: transparent;
+  border: none;
+  padding: 0;
+  text-align: left;
+}
+.isle-notification-body-button:hover .isle-notification-body {
+  color: rgba(255, 255, 255, 0.85);
+}
+.isle-notification-click-box { spacing: 10px; }
 .isle-notification-line { spacing: 8px; }
 .isle-notification-title { font-size: 13px; font-weight: 600; }
-.isle-notification-body { font-size: 13px; color: rgba(255, 255, 255, 0.55); }
+.isle-notification-body { font-size: 13px; color: rgba(255, 255, 255, 0.55); transition-duration: 120ms; }
 .isle-notification-tools { spacing: 6px; }
 .isle-notification-action { font-size: 11px; padding: 3px 10px; }
 .isle-notification-dismiss { padding: 4px; border-radius: 999px; color: rgba(255, 255, 255, 0.7); background-color: #3a3a3c; }
+
+/* Chevron expand/collapse button */
+.isle-notification-expand {
+  padding: 4px;
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.5);
+  transition-duration: 120ms;
+}
+.isle-notification-expand:hover {
+  color: #ffffff;
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+/* Expanded notification card */
+.isle-notification-expanded {
+  spacing: 6px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background-color: rgba(255, 255, 255, 0.05);
+  transition-duration: 120ms;
+}
+.isle-notification-expanded:hover {
+  background-color: rgba(255, 255, 255, 0.07);
+}
+.isle-notification-expanded-header {
+  spacing: 8px;
+}
+.isle-notification-expanded-body-box {
+  padding: 2px 2px 4px 30px;
+  border-radius: 6px;
+  text-align: left;
+  background-color: transparent;
+  border: none;
+}
+.isle-notification-expanded-body-box:hover {
+  background-color: rgba(255, 255, 255, 0.03);
+}
+.isle-notification-expanded-body {
+  font-size: 13px;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.88);
+}
+.isle-notification-expanded-actions {
+  spacing: 6px;
+  padding: 2px 0 2px 30px;
+}
+
+/* Vertical scrollbar in notifications list */
+.isle-notifications-scroll {
+  padding-right: 4px;
+  -st-vfade-offset: 14px;
+}
+.isle-notifications-scroll StScrollBar {
+  padding: 0;
+}
+.isle-notifications-scroll StScrollBar StBin#trough {
+  background-color: rgba(255, 255, 255, 0.04);
+  border-radius: 999px;
+  width: 4px;
+}
+.isle-notifications-scroll StScrollBar StButton#vhandle {
+  background-color: rgba(255, 255, 255, 0.22);
+  border-radius: 999px;
+  width: 4px;
+  transition-duration: 150ms;
+}
+.isle-notifications-scroll StScrollBar StButton#vhandle:hover,
+.isle-notifications-scroll StScrollBar StButton#vhandle:active {
+  background-color: rgba(255, 255, 255, 0.55);
+  width: 6px;
+}
 
 /* A system notification's symbolic icon, on a tile the size of an app icon. */
 .isle-notification-glyph {

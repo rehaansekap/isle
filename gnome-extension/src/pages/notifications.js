@@ -11,7 +11,7 @@ import St from 'gi://St';
 import {VERTICAL} from '../compat.js';
 import * as Format from '../format.js';
 import {notificationIcon, plainBody} from '../notifications.js';
-import {icon, iconButton, isSymbolic, label, ownIcon, pillButton, setButtonIcon} from '../widgets.js';
+import {icon, iconButton, isSymbolic, label, ownIcon, pillButton, setButtonIcon, wrapLines} from '../widgets.js';
 import {Page} from './page.js';
 
 /** A card offers at most this many of its notification's buttons ("Mark as read", "Accept"). */
@@ -54,6 +54,8 @@ class NotificationsPage extends Page {
             center.connect('seen-changed', () => this.emit('news-changed')),
             center.connect('dnd-changed', () => this._updateDnd()),
         ];
+        // Notifications expanded by user to show full message text and details.
+        this._expanded = new Set();
         // Built when first warmed up or shown (see `warmUp`).
         this._times = [];
         this._stale = true;
@@ -99,10 +101,11 @@ class NotificationsPage extends Page {
     _buildList() {
         this._list = new St.BoxLayout({...VERTICAL, style_class: 'isle-notification-list'});
         this._scroll = new St.ScrollView({
-            style_class: 'isle-task-scroll',
+            style_class: 'isle-notifications-scroll isle-task-scroll',
             hscrollbar_policy: St.PolicyType.NEVER,
-            // Scrolls with the wheel or touchpad; no scrollbar over the cards.
-            vscrollbar_policy: St.PolicyType.EXTERNAL,
+            // Automatic vertical scrollbar overlaying smoothly on the right
+            vscrollbar_policy: St.PolicyType.AUTOMATIC,
+            overlay_scrollbars: true,
             x_expand: true,
             y_expand: true,
         });
@@ -128,12 +131,23 @@ class NotificationsPage extends Page {
         this.emit('news-changed');
     }
 
+    _notificationKey(notification) {
+        return notification.id ?? `${notification.source?.id || 'app'}:${notification.title || ''}:${notification.datetime?.to_unix?.() || 0}`;
+    }
+
     _update({seen = true} = {}) {
         this._stale = false;
         /** Each row's "5m ago", with when it came, to bring up to date without a rebuild. */
         this._times = [];
         const notifications = this._center.notifications;
         this._clearButton.visible = notifications.some(n => !n.resident);
+
+        // Prune any expanded keys that are no longer in notifications
+        const activeKeys = new Set(notifications.map(n => this._notificationKey(n)));
+        for (const key of this._expanded) {
+            if (!activeKeys.has(key))
+                this._expanded.delete(key);
+        }
 
         // Newest first, one row each, as a list to scroll.
         this._list.destroy_all_children();
@@ -157,22 +171,76 @@ class NotificationsPage extends Page {
         this._dndNote.visible = on;
     }
 
-    /** A row: the app's icon, who and what on one line, and when; under the pointer, its buttons and ×. */
     _row(notification) {
+        const key = this._notificationKey(notification);
+        const container = new St.BoxLayout({...VERTICAL, style_class: 'isle-notification-row-container', x_expand: true});
+
+        const refreshRow = () => {
+            container.destroy_all_children();
+            const isExpanded = this._expanded.has(key);
+            if (isExpanded) {
+                container.add_child(this._buildExpandedRow(notification, key, () => {
+                    this._expanded.delete(key);
+                    refreshRow();
+                }));
+            } else {
+                container.add_child(this._buildCollapsedRow(notification, key, () => {
+                    this._expanded.add(key);
+                    refreshRow();
+                }));
+            }
+        };
+
+        refreshRow();
+        return container;
+    }
+
+    /** Collapsed row: single line summary with ellipsis preview, hover tools, and expand chevron. */
+    _buildCollapsedRow(notification, key, onExpand) {
         const content = new St.BoxLayout({style_class: 'isle-notification', x_expand: true});
-        content.add_child(notificationBadge(notificationIcon(notification)));
+
+        const titleText = (notification.title || notification.source?.title || '').replace(/\s+/g, ' ').trim();
+        const rawBody = this._sharing ? '' : plainBody(notification).replace(/\s+/g, ' ').trim();
+        const hasExpandable = rawBody.length > 0;
 
         const line = new St.BoxLayout({style_class: 'isle-notification-line', x_expand: true, y_align: Clutter.ActorAlign.CENTER});
-        // On one line, as the body: a title may hold line breaks too.
-        const title = label((notification.title || notification.source?.title || '').replace(/\s+/g, ' ').trim(), 'isle-notification-title');
-        // While the screen is shared, only who wrote, not what.
-        const text = this._sharing ? '' : plainBody(notification).replace(/\s+/g, ' ').trim();
-        const body = label(text, 'isle-notification-body', {x_expand: true});
-        for (const part of [title, body])
-            part.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-        body.visible = body.text.length > 0;
-        line.add_child(title);
-        line.add_child(body);
+
+        // App icon & title: clicking activates the notification and opens the app
+        const titleButton = new St.Button({
+            style_class: 'isle-notification-click-area',
+            can_focus: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        const titleBox = new St.BoxLayout({style_class: 'isle-notification-title-box', y_align: Clutter.ActorAlign.CENTER});
+        titleBox.add_child(notificationBadge(notificationIcon(notification)));
+        const titleLabel = label(titleText, 'isle-notification-title');
+        titleLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+        titleBox.add_child(titleLabel);
+        titleButton.set_child(titleBox);
+        titleButton.connect('clicked', () => {
+            notification.activate();
+            this.emit('request-close');
+        });
+        line.add_child(titleButton);
+
+        // Body preview: clicking expands the notification to show full message
+        if (hasExpandable) {
+            const bodyButton = new St.Button({
+                style_class: 'isle-notification-body-button',
+                x_expand: true,
+                can_focus: true,
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            const bodyLabel = label(rawBody, 'isle-notification-body', {x_expand: true});
+            bodyLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+            bodyButton.set_child(bodyLabel);
+            bodyButton.connect('clicked', () => onExpand());
+            line.add_child(bodyButton);
+        } else {
+            titleLabel.x_expand = true;
+            titleButton.x_expand = true;
+        }
+
         content.add_child(line);
 
         // The time, and in its place under the pointer the buttons and ×.
@@ -181,7 +249,6 @@ class NotificationsPage extends Page {
         this._times.push([time, notification.datetime]);
         corner.add_child(time);
         const tools = new St.BoxLayout({style_class: 'isle-notification-tools', x_align: Clutter.ActorAlign.END, opacity: 0, visible: false});
-        // Its buttons, as GNOME's banner had them; not while the screen is shared.
         const actions = this._sharing ? [] : (notification.actions ?? []).slice(0, MAX_ACTIONS);
         for (const action of actions) {
             tools.add_child(pillButton(action.label, 'isle-pill-small isle-notification-action', () => {
@@ -198,11 +265,22 @@ class NotificationsPage extends Page {
         corner.add_child(tools);
         content.add_child(corner);
 
-        const row = new St.Button({style_class: 'isle-notification-row', child: content, x_expand: true, can_focus: true});
-        row.connect('clicked', () => {
-            notification.activate();
-            this.emit('request-close');
+        // Dedicated chevron button to expand notification
+        if (hasExpandable) {
+            const expandBtn = iconButton('isle-chevron-down-symbolic', 'isle-button-flat isle-notification-expand',
+                () => onExpand(), {size: 12, accessibleName: 'Expand notification'});
+            expandBtn.y_align = Clutter.ActorAlign.CENTER;
+            content.add_child(expandBtn);
+        }
+
+        const row = new St.BoxLayout({
+            style_class: 'isle-notification-row',
+            x_expand: true,
+            reactive: true,
+            track_hover: true,
         });
+        row.add_child(content);
+
         if (tools.get_n_children() > 0) {
             row.connect('notify::hover', () => {
                 tools.show();
@@ -212,6 +290,89 @@ class NotificationsPage extends Page {
             });
         }
         return row;
+    }
+
+    /** Expanded row: full multi-line message body without ellipsis, explicit actions, and collapse chevron. */
+    _buildExpandedRow(notification, key, onCollapse) {
+        const card = new St.BoxLayout({
+            ...VERTICAL,
+            style_class: 'isle-notification-expanded',
+            x_expand: true,
+            reactive: true,
+            track_hover: true,
+        });
+
+        const header = new St.BoxLayout({
+            style_class: 'isle-notification-expanded-header',
+            x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+
+        const titleText = (notification.title || notification.source?.title || '').trim();
+        const titleButton = new St.Button({
+            style_class: 'isle-notification-click-area',
+            x_expand: true,
+            can_focus: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        const titleBox = new St.BoxLayout({style_class: 'isle-notification-title-box', y_align: Clutter.ActorAlign.CENTER, x_expand: true});
+        titleBox.add_child(notificationBadge(notificationIcon(notification)));
+        const title = label(titleText, 'isle-notification-title', {x_expand: true, y_align: Clutter.ActorAlign.CENTER});
+        title.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+        titleBox.add_child(title);
+        titleButton.set_child(titleBox);
+        titleButton.connect('clicked', () => {
+            notification.activate();
+            this.emit('request-close');
+        });
+        header.add_child(titleButton);
+
+        const time = label(Format.ago(notification.datetime), 'isle-notification-time', {x_align: Clutter.ActorAlign.END, y_align: Clutter.ActorAlign.CENTER});
+        this._times.push([time, notification.datetime]);
+        header.add_child(time);
+
+        if (!notification.resident) {
+            const dismiss = iconButton('isle-close-symbolic', 'isle-button-flat isle-notification-dismiss',
+                () => notification.destroy(), {size: 10, accessibleName: 'Dismiss'});
+            dismiss.y_align = Clutter.ActorAlign.CENTER;
+            header.add_child(dismiss);
+        }
+
+        const collapseBtn = iconButton('isle-chevron-up-symbolic', 'isle-button-flat isle-notification-expand',
+            () => onCollapse(), {size: 12, accessibleName: 'Collapse notification'});
+        collapseBtn.y_align = Clutter.ActorAlign.CENTER;
+        header.add_child(collapseBtn);
+
+        card.add_child(header);
+
+        // Entire message content with line breaks preserved, full wrapping, and NO ellipsis
+        const rawBody = this._sharing ? '' : plainBody(notification).trim();
+        if (rawBody.length > 0) {
+            const bodyBox = new St.Button({
+                style_class: 'isle-notification-expanded-body-box',
+                x_expand: true,
+                can_focus: true,
+            });
+            const bodyLabel = label(rawBody, 'isle-notification-expanded-body', {x_expand: true});
+            wrapLines(bodyLabel, Pango.EllipsizeMode.NONE);
+            bodyBox.set_child(bodyLabel);
+            bodyBox.connect('clicked', () => onCollapse());
+            card.add_child(bodyBox);
+        }
+
+        const actions = this._sharing ? [] : (notification.actions ?? []).slice(0, MAX_ACTIONS);
+        if (actions.length > 0) {
+            const actionsBox = new St.BoxLayout({style_class: 'isle-notification-expanded-actions', x_expand: true});
+            for (const action of actions) {
+                actionsBox.add_child(pillButton(action.label, 'isle-pill-small isle-notification-action', () => {
+                    action.activate();
+                    this.emit('request-close');
+                }));
+            }
+            card.add_child(actionsBox);
+        }
+
+        return card;
     }
 
     warmUp() {
@@ -234,13 +395,29 @@ class NotificationsPage extends Page {
     onActivate() {
         this._center.acknowledgeAll();
         // Rebuilt only if something came or went while it was closed; else just the times move on.
-        if (this._stale)
+        if (this._stale) {
             this._update();
-        else
-            this._times.forEach(([time, datetime]) => (time.text = Format.ago(datetime)));
+        } else {
+            this._times = this._times.filter(([time]) => {
+                try {
+                    return !time.is_finalized?.() && Boolean(time.get_parent?.());
+                } catch {
+                    return false;
+                }
+            });
+            this._times.forEach(([time, datetime]) => {
+                try {
+                    time.text = Format.ago(datetime);
+                } catch {
+                    // Ignore destroyed actors
+                }
+            });
+        }
     }
 
     _onDestroy() {
         this._centerHandlers.forEach(id => this._center.disconnect(id));
+        this._times = [];
+        this._expanded.clear();
     }
 });
