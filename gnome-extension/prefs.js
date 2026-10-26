@@ -278,6 +278,13 @@ export default class IslePreferences extends ExtensionPreferences {
         const depth = spinRow(settings, 'notch-depth', 'Island height', 'How far the closed island hangs below the top bar, in pixels', 24, 40);
         settings.bind('island-in-top-bar', depth, 'sensitive', Gio.SettingsBindFlags.GET | Gio.SettingsBindFlags.INVERT_BOOLEAN);
         look.add(depth);
+        const dimRow = switchRow(settings, 'dim-when-top-bar-hidden', 'Dim when top bar is hidden',
+            'Reduce opacity and pass clicks through to windows underneath when the top bar is hidden (e.g. by Hide Top Bar)');
+        look.add(dimRow);
+        const opacityRow = spinRow(settings, 'dimmed-opacity', 'Dimmed opacity (%)',
+            'Opacity percentage while the top bar is hidden (alerts still show at 100%)', 10, 90);
+        settings.bind('dim-when-top-bar-hidden', opacityRow, 'sensitive', Gio.SettingsBindFlags.GET);
+        look.add(opacityRow);
         look.add(choiceRow(settings, 'island-monitor', 'Display', 'With more than one display, where the island is', [
             ['primary', 'Main display'],
             ['active', 'Display in use'],

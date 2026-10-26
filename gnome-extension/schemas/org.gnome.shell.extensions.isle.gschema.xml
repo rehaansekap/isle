@@ -20,6 +20,17 @@
       <summary>Closed island inside the top bar</summary>
       <description>Like a notch: the top bar is as tall as the closed island, so it never covers windows. Alerts and the open island still hang below it for a moment.</description>
     </key>
+    <key name="dim-when-top-bar-hidden" type="b">
+      <default>true</default>
+      <summary>Dim and pass clicks through when top bar is hidden</summary>
+      <description>When the top bar is hidden (e.g. with Hide Top Bar), reduce the island's opacity and pass clicks through to windows and tabs underneath.</description>
+    </key>
+    <key name="dimmed-opacity" type="i">
+      <range min="10" max="90"/>
+      <default>35</default>
+      <summary>Dimmed island opacity</summary>
+      <description>Opacity percentage (10 to 90) of the island while the top bar is hidden.</description>
+    </key>
     <key name="lyrics-online" type="b">
       <default>true</default>
       <summary>Look up lyrics online</summary>

@@ -27,7 +27,8 @@ const COMPACT_BAR_CLASS = 'isle-compact-bar';
 const NOTCH_BAR_CLASS = 'isle-notch-bar';
 
 // Restyles the top bar around the island (black or glass) and hides the clock and its calendar menu.
-// Signals: `height-changed`, `style-changed` (`blendsIn` may have changed), `calendar-requested` (Super+V).
+// Signals: `height-changed`, `style-changed` (`blendsIn` may have changed), `calendar-requested` (Super+V),
+// `panel-visibility-changed` (when the panel hides or shows, e.g. via Hide Top Bar).
 export class TopBar extends Signals.EventEmitter {
     constructor(settings) {
         super();
@@ -36,6 +37,14 @@ export class TopBar extends Signals.EventEmitter {
         this._dateMenu = Main.panel.statusArea.dateMenu;
         this._dateMenu.opacity = 0;
         this._dateMenu.reactive = false;
+
+        this._panelBox = Main.layoutManager.panelBox;
+        this._panelHidden = this.isPanelHidden;
+        this._panelBoxChanged = [
+            this._panelBox.connect('notify::y', () => this._onPanelVisibility()),
+            this._panelBox.connect('notify::translation-y', () => this._onPanelVisibility()),
+            this._panelBox.connect('notify::visible', () => this._onPanelVisibility()),
+        ];
 
         this._settingsChanged = [
             settings.connect('changed::top-bar-style', () => {
@@ -59,6 +68,23 @@ export class TopBar extends Signals.EventEmitter {
             if (open && !this._clockShown && this._settings.get_string('super-v') === 'isle')
                 menu.close();
         });
+    }
+
+    /** Whether the top bar panel is hidden (e.g. by Hide Top Bar or intellihide). */
+    get isPanelHidden() {
+        if (!this._panelBox.visible)
+            return true;
+        const baseY = Main.layoutManager.primaryMonitor?.y ?? 0;
+        const height = this._panelBox.height || 32;
+        return this._panelBox.y <= baseY - height + 1 || this._panelBox.translation_y <= -height + 1;
+    }
+
+    _onPanelVisibility() {
+        const hidden = this.isPanelHidden;
+        if (hidden !== this._panelHidden) {
+            this._panelHidden = hidden;
+            this.emit('panel-visibility-changed', hidden);
+        }
     }
 
     get height() {
@@ -148,6 +174,7 @@ export class TopBar extends Signals.EventEmitter {
         // Tell no one about changes made while tearing down.
         this.disconnectAll();
         this._settingsChanged.forEach(id => this._settings.disconnect(id));
+        this._panelBoxChanged?.forEach(id => this._panelBox.disconnect(id));
         Main.panel.disconnect(this._heightChanged);
         Main.panel.disconnect(this._styleChanged);
         this._dateMenu.menu.disconnect(this._menuChanged);

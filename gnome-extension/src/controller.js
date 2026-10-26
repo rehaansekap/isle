@@ -422,10 +422,15 @@ export class Controller {
             this._settingsChanged.push(this._settings.connect(`changed::agent-alerts-${provider}`, () =>
                 this._hookAgent(provider)));
         }
+        for (const key of ['dim-when-top-bar-hidden', 'dimmed-opacity']) {
+            this._settingsChanged.push(this._settings.connect(`changed::${key}`, () =>
+                this._syncDimmedState()));
+        }
 
         this._topBar.connect('height-changed', () => this._updateGeometry());
         this._topBar.connect('style-changed', () => this._updateGeometry());
         this._topBar.connect('calendar-requested', () => this._toggleFromKeyboard());
+        this._topBar.connect('panel-visibility-changed', () => this._syncDimmedState());
         island.connect('key-press-event', (_actor, event) => {
             // A command waiting on the user: Enter runs it, Esc denies it.
             const key = event.get_key_symbol();
@@ -826,6 +831,7 @@ export class Controller {
         if (presentation === 'expanded' && this._expanded.page === this._shelf)
             this._shelfHelper.prepare();
         this._shelfHelper.sync();
+        this._syncDimmedState();
     }
 
     /**
@@ -927,6 +933,41 @@ export class Controller {
             this._tint = tint;
             this._tintStyle = style;
             this._island.setTint(tint, style);
+        }
+    }
+
+    /** Dims the island and makes it click-through when the top bar is hidden, unless an alert is showing. */
+    _syncDimmedState() {
+        if (!this._island || !this._topBar)
+            return;
+        const dimEnabled = this._settings.get_boolean('dim-when-top-bar-hidden');
+        const dimmedPercent = Math.max(10, Math.min(90, this._settings.get_int('dimmed-opacity')));
+        const isHidden = !this._onBar || this._topBar.isPanelHidden;
+        const hasActiveAlert = this._presentation !== 'compact' || this._voiceOpen || this._expandWanted;
+
+        const shouldDim = dimEnabled && isHidden && !hasActiveAlert;
+        const targetOpacity = shouldDim ? Math.round((dimmedPercent / 100) * 255) : 255;
+
+        if (this._island.passThrough !== shouldDim) {
+            this._island.setPassThrough(shouldDim);
+            if (shouldDim) {
+                this._cancel('hover');
+                this._cancel('expand');
+                this._hoverUnmoved = false;
+            }
+        }
+
+        if (this._island.opacity !== targetOpacity) {
+            this._island.remove_transition('opacity');
+            if (St.Settings.get().enable_animations) {
+                this._island.ease({
+                    opacity: targetOpacity,
+                    duration: 200,
+                    mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                });
+            } else {
+                this._island.opacity = targetOpacity;
+            }
         }
     }
 
@@ -1146,6 +1187,8 @@ export class Controller {
     }
 
     _onClick(event, button = event.get_button()) {
+        if (this._island.passThrough)
+            return Clutter.EVENT_PROPAGATE;
         // A click puts an answer away; the face and the Sign in button take their own clicks.
         if (this._voiceOpen) {
             // Peeked at by hovering while it works, a click keeps it open, Esc putting it back.

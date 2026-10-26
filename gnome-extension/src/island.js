@@ -127,6 +127,23 @@ export const Island = GObject.registerClass({
         this._setHovered(this.contains(global.stage.get_actor_at_pos(Clutter.PickMode.REACTIVE, x, y)));
     }
 
+    /** Sets whether the island lets pointer events pass through to windows underneath. */
+    setPassThrough(passThrough) {
+        const reactive = !passThrough;
+        this.reactive = reactive;
+        this._stage.reactive = reactive;
+        for (const view of this._views)
+            view.reactive = reactive;
+        if (passThrough)
+            this._setHovered(false);
+        else
+            this.syncHover();
+    }
+
+    get passThrough() {
+        return !this.reactive;
+    }
+
     // A finger is no pointer resting on it: a tap's own enter and leave are not hovers.
     vfunc_enter_event(event) {
         if (!event.get_event_sequence())
@@ -297,8 +314,7 @@ export const Island = GObject.registerClass({
     addView(view) {
         view.connect('notify::width', () => this._onViewWidth(view));
         view.opacity = 0;
-        // For good: toggling it would restyle the view's every child.
-        view.reactive = true;
+        view.reactive = this.reactive;
         view.hide();
         this._stage.insert_child_below(view, this._stageEnd);
         this._views.push(view);
