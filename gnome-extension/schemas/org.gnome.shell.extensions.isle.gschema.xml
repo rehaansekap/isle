@@ -74,6 +74,12 @@
       <summary>Island height</summary>
       <description>How far the closed island hangs below the top bar, in pixels, when it is not inside the top bar.</description>
     </key>
+    <key name="expanded-max-height" type="i">
+      <range min="180" max="600"/>
+      <default>320</default>
+      <summary>Maximum open island height</summary>
+      <description>Maximum height of the dynamic island when open, in pixels. The island hugs its content up to this limit, becoming scrollable if the content is taller.</description>
+    </key>
     <key name="replace-osd" type="b">
       <default>true</default>
       <summary>Show volume and brightness in the island</summary>

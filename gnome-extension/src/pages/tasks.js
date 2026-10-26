@@ -59,7 +59,7 @@ class ReminderRow extends St.BoxLayout {
 
 export const TasksPage = GObject.registerClass(
 class TasksPage extends Page {
-    _init(daemon, {height}) {
+    _init(daemon, {height} = {}) {
         super._init(daemon, {
             style_class: 'isle-page isle-reminders',
             layout_manager: new Clutter.BinLayout(),
@@ -81,8 +81,8 @@ class TasksPage extends Page {
         this._scroll = new St.ScrollView({
             style_class: 'isle-reminder-scroll',
             hscrollbar_policy: St.PolicyType.NEVER,
-            // Scrolls with the wheel or touchpad; no scrollbar over the list.
-            vscrollbar_policy: St.PolicyType.EXTERNAL,
+            vscrollbar_policy: St.PolicyType.AUTOMATIC,
+            overlay_scrollbars: true,
             x_expand: true,
             y_expand: true,
         });
@@ -101,7 +101,25 @@ class TasksPage extends Page {
     }
 
     _tasks() {
-        return this.daemon.state.tasks ?? [];
+        return this.daemon?.state?.tasks ?? [];
+    }
+
+    get preferredHeight() {
+        const tasks = this._tasks().filter(t => !t.done);
+        const headerAndNewRow = 84;
+        if (tasks.length === 0)
+            return 140;
+        let listHeight = 0;
+        const children = this._list?.get_children() ?? [];
+        if (children.length > 0) {
+            for (const child of children) {
+                const [, natural] = child.get_preferred_height(-1);
+                listHeight += (natural > 0 ? natural : 30) + 4;
+            }
+        } else {
+            listHeight = tasks.length * 34;
+        }
+        return Math.max(140, Math.round(headerAndNewRow + listHeight + 8));
     }
 
     // Building
@@ -227,6 +245,7 @@ class TasksPage extends Page {
         this._known = new Set(shown.map(task => task.id));
         this._empty.visible = shown.length === 0;
         this._empty.text = tasks.length > shown.length ? 'All done' : 'No reminders';
+        this.emit('height-changed');
     }
 
     /** Opens `row` from nothing to its height, fading in, while the rows below make room. */

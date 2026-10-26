@@ -348,6 +348,10 @@ export class Controller {
             if (this._presentation === 'expanded')
                 this._render();
         });
+        expanded.connect('height-changed', () => {
+            if (this._presentation === 'expanded')
+                this._render();
+        });
         expanded.connect('tint-changed', () => this._syncTint());
         expanded.connect('tint-motion', (_view, time, level) => {
             if (this._presentation === 'expanded')
@@ -782,7 +786,7 @@ export class Controller {
         case 'expanded':
             size = {
                 width: this._expanded.preferredWidth,
-                height: (this._onBar ? top : HEADER_WITHOUT_BAR * scale) + (PAGE_HEIGHT + BOTTOM_PADDING) * scale,
+                height: (this._onBar ? top : HEADER_WITHOUT_BAR * scale) + (this._expanded.pageHeight + BOTTOM_PADDING) * scale,
                 radius: EXPANDED_RADIUS * scale,
                 shoulder: EXPANDED_SHOULDER * scale,
             };

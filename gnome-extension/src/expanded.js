@@ -59,6 +59,8 @@ export const ExpandedView = GObject.registerClass({
         'page-settled': {},
         // The current page wants the island wider or narrower.
         'width-changed': {},
+        // The current page wants the island taller or shorter.
+        'height-changed': {},
         // The current page's tint colour changed; see `tint`.
         'tint-changed': {},
         // The current page's 'aura' tint moved: time (s), level (0..1).
@@ -102,13 +104,17 @@ export const ExpandedView = GObject.registerClass({
         this.add_child(bottom);
         onUiScale(bottom, scale => {
             bottom.height = BOTTOM_PADDING * scale;
-            this._pagerArea.height = PAGE_HEIGHT * scale;
+            this._pagerArea.height = this.pageHeight * scale;
         });
 
         for (const page of pages) {
             page.connect('width-changed', () => {
                 if (page === this.page)
                     this._syncWidth();
+            });
+            page.connect('height-changed', () => {
+                if (page === this.page)
+                    this._syncHeight();
             });
             page.connect('tint-changed', () => {
                 if (page === this.page)
@@ -122,6 +128,7 @@ export const ExpandedView = GObject.registerClass({
             page.connect('availability-changed', () => this._onAvailabilityChanged(page));
         }
 
+        this._settingsChanged = settings.connect('changed::expanded-max-height', () => this._syncHeight());
         this._daemonChanged = daemon.connect('changed', (_daemon, key) => {
             if (key === 'nowPlaying' || key === 'pomodoro')
                 this._updateHeader();
@@ -130,6 +137,7 @@ export const ExpandedView = GObject.registerClass({
         this._callChanged = call.connect('changed', () => this._updateHeader());
         this._syncPage();
         this._syncWidth();
+        this._syncHeight();
         // Another scale: the tab names are measured again, and the width with them.
         onUiScale(this, () => this._syncTabs(), {now: false});
         this.connect('destroy', () => this._onDestroy());
@@ -306,6 +314,27 @@ export const ExpandedView = GObject.registerClass({
         return Math.max(this.page.preferredWidth ?? px(EXPANDED_WIDTH), this._headerWidth());
     }
 
+    get maxPageHeight() {
+        return this._settings ? this._settings.get_int('expanded-max-height') : 320;
+    }
+
+    get pageHeight() {
+        const wanted = this.page?.preferredHeight ?? PAGE_HEIGHT;
+        return Math.min(wanted, this.maxPageHeight);
+    }
+
+    /** The height the island's page content needs, bounded by maxPageHeight. */
+    get preferredHeight() {
+        return this.pageHeight;
+    }
+
+    _syncHeight() {
+        const scale = uiScale();
+        if (this._pagerArea)
+            this._pagerArea.height = this.pageHeight * scale;
+        this.emit('height-changed');
+    }
+
     // The tabs and the status side by side with room between, so they never overlap,
     // whatever is showing (a call, a recording, a long date).
     _headerWidth() {
@@ -470,6 +499,7 @@ export const ExpandedView = GObject.registerClass({
     _syncPage() {
         this._syncTabs();
         this._updateHeader();
+        this._syncHeight();
     }
 
     /** A page lost its tab: leave it for the next page that has one. */
@@ -693,6 +723,8 @@ export const ExpandedView = GObject.registerClass({
     _onDestroy() {
         this._stopClock();
         this._stopRecordingTick();
+        if (this._settingsChanged)
+            this._settings.disconnect(this._settingsChanged);
         this._daemon.disconnect(this._daemonChanged);
         this._privacy.disconnect(this._privacyChanged);
         this._call.disconnect(this._callChanged);

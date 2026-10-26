@@ -677,34 +677,34 @@
 /* ── Calendar ─────────────────────────────────────────── */
 
 /* The month, as a calendar widget shows it. */
-.isle-cal-month { width: 196px; spacing: 2px; }
-.isle-cal-month-header { spacing: 0; padding-bottom: 2px; }
-.isle-cal-month-title { padding: 1px 4px; border-radius: 6px; }
+.isle-cal-month { width: 252px; spacing: 4px; }
+.isle-cal-month-header { spacing: 2px; padding-bottom: 4px; }
+.isle-cal-month-title { padding: 2px 6px; border-radius: 6px; }
 .isle-cal-month-title:hover { background-color: rgba(255, 255, 255, 0.06); }
-.isle-cal-month-title-box { spacing: 5px; }
+.isle-cal-month-title-box { spacing: 6px; }
 /* No letter-spacing: St rounds it to whole pixels (none at 100%, 1px at 200%), and Pango then cut the
  * name at the width St measured for it ("OCTOB…"). */
-.isle-cal-month-name { font-size: 12px; font-weight: 700; color: #ff453a; }
-.isle-cal-year { font-size: 12px; font-weight: 600; color: rgba(255, 255, 255, 0.5); }
+.isle-cal-month-name { font-size: 13px; font-weight: 700; color: #ff453a; }
+.isle-cal-year { font-size: 13px; font-weight: 600; color: rgba(255, 255, 255, 0.5); }
 .isle-cal-arrow { padding: 4px; color: rgba(255, 255, 255, 0.75); }
 
-.isle-cal-weekdays { padding-bottom: 1px; }
+.isle-cal-weekdays { padding-bottom: 2px; }
 .isle-cal-weekday {
-  width: 28px;
-  font-size: 10px;
+  width: 36px;
+  font-size: 11px;
   font-weight: 600;
   text-align: center;
   color: rgba(255, 255, 255, 0.55);
 }
 .isle-cal-weekday.weekend { color: rgba(255, 255, 255, 0.5); }
 
-.isle-cal-cell { width: 28px; }
+.isle-cal-cell { width: 36px; }
 
 .isle-cal-day {
-  width: 19px;
-  height: 19px;
-  border-radius: 10px;
-  font-size: 11px;
+  width: 26px;
+  height: 26px;
+  border-radius: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: #ffffff;
   transition-duration: 120ms;
@@ -719,43 +719,43 @@
 
 /* A day with events: a dot just under its number. */
 .isle-cal-dot {
-  width: 3px;
-  height: 3px;
-  margin-bottom: 1px;
+  width: 4px;
+  height: 4px;
+  margin-bottom: 2px;
   border-radius: 2px;
   background-color: rgba(255, 255, 255, 0.55);
 }
 .isle-cal-dot.on-today { background-color: #ffffff; }
 
 /* The day's events. */
-.isle-cal-agenda { spacing: 6px; }
+.isle-cal-agenda { spacing: 8px; }
 .isle-cal-day-header { spacing: 8px; }
-.isle-cal-day-name { font-size: 14px; font-weight: 600; letter-spacing: -0.1px; }
+.isle-cal-day-name { font-size: 15px; font-weight: 600; letter-spacing: -0.1px; }
 
 .isle-cal-today {
   font-size: 11px;
   font-weight: 600;
-  padding: 2px 9px;
+  padding: 3px 10px;
   border-radius: 999px;
   color: #ffffff;
   background-color: #2c2c2e;
 }
 
 .isle-cal-today:hover { background-color: #3a3a3c; }
-.isle-cal-add { padding: 6px 12px; font-size: 13px; }
+.isle-cal-add { padding: 7px 12px; font-size: 13px; }
 .isle-cal-scroll { -st-vfade-offset: 14px; }
-.isle-cal-events { spacing: 4px; padding-bottom: 2px; }
+.isle-cal-events { spacing: 5px; padding-bottom: 2px; }
 
 /* An event: tinted in its calendar's colour (set
  * in calendar.js), with a bar of it down the side. */
 .isle-cal-event {
   spacing: 8px;
-  padding: 0 6px 0 0;
-  min-height: 26px;
-  border-radius: 7px;
+  padding: 2px 8px 2px 0;
+  min-height: 28px;
+  border-radius: 8px;
 }
 
-.isle-cal-event-bar { width: 3px; border-radius: 2px; margin: 4px 0 4px 5px; }
+.isle-cal-event-bar { width: 3px; border-radius: 2px; margin: 4px 0 4px 6px; }
 .isle-cal-event-title { font-size: 13px; font-weight: 600; }
 .isle-cal-event-time { font-size: 11px; font-weight: 500; color: rgba(255, 255, 255, 0.65); }
 .isle-cal-empty { font-size: 13px; font-weight: 600; color: rgba(255, 255, 255, 0.55); }

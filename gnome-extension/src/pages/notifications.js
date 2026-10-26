@@ -31,11 +31,10 @@ function notificationBadge(gicon) {
 
 export const NotificationsPage = GObject.registerClass(
 class NotificationsPage extends Page {
-    _init(daemon, center, {height}) {
+    _init(daemon, center, {height} = {}) {
         super._init(daemon, {
             style_class: 'isle-page isle-notifications',
             layout_manager: new Clutter.BoxLayout({orientation: Clutter.Orientation.VERTICAL}),
-            height,
         });
         this.name = 'notifications';
         this._center = center;
@@ -69,6 +68,28 @@ class NotificationsPage extends Page {
 
     get hasNews() {
         return this._center.hasUnseen;
+    }
+
+    get preferredHeight() {
+        const barHeight = 40 + (this._dndNote?.visible ? 26 : 0);
+        const notifications = this._center?.notifications ?? [];
+        if (notifications.length === 0)
+            return barHeight + 110;
+
+        let listHeight = 0;
+        const children = this._list?.get_children() ?? [];
+        if (children.length > 0) {
+            for (const child of children) {
+                const [, natural] = child.get_preferred_height(-1);
+                listHeight += (natural > 0 ? natural : 38) + 4;
+            }
+        } else {
+            for (const n of notifications) {
+                const key = this._notificationKey(n);
+                listHeight += (this._expanded?.has(key) ? 140 : 38) + 4;
+            }
+        }
+        return Math.max(130, Math.round(barHeight + listHeight + 8));
     }
 
     /** How many there are, then Do Not Disturb and Clear All as small round buttons. */
@@ -159,6 +180,7 @@ class NotificationsPage extends Page {
         // Seen while open: no unread dot for something already on screen.
         if (this.active && seen)
             this._center.acknowledgeAll();
+        this.emit('height-changed');
     }
 
     _updateDnd() {
@@ -189,6 +211,7 @@ class NotificationsPage extends Page {
                     refreshRow();
                 }));
             }
+            this.emit('height-changed');
         };
 
         refreshRow();

@@ -278,6 +278,9 @@ export default class IslePreferences extends ExtensionPreferences {
         const depth = spinRow(settings, 'notch-depth', 'Island height', 'How far the closed island hangs below the top bar, in pixels', 24, 40);
         settings.bind('island-in-top-bar', depth, 'sensitive', Gio.SettingsBindFlags.GET | Gio.SettingsBindFlags.INVERT_BOOLEAN);
         look.add(depth);
+        const maxOpenHeight = spinRow(settings, 'expanded-max-height', 'Open island max height',
+            'Maximum height of the open island, in pixels. Content hugs naturally below this; taller content scrolls', 180, 600);
+        look.add(maxOpenHeight);
         const dimRow = switchRow(settings, 'dim-when-top-bar-hidden', 'Dim when top bar is hidden',
             'Reduce opacity and pass clicks through to windows underneath when the top bar is hidden (e.g. by Hide Top Bar)');
         look.add(dimRow);

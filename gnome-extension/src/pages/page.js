@@ -14,6 +14,8 @@ export const Page = GObject.registerClass({
         'request-keyboard': {param_types: [GObject.TYPE_BOOLEAN]},
         // `preferredWidth` changed.
         'width-changed': {},
+        // `preferredHeight` changed.
+        'height-changed': {},
         // `tint` changed.
         'tint-changed': {},
         // A 'aura' tint moved: time (s), level (0..1); see `Island.setTintMotion`.
@@ -29,10 +31,8 @@ export const Page = GObject.registerClass({
     },
 }, class Page extends St.Widget {
     /** `params.height` is in CSS pixels (see `px`). */
-    _init(daemon, {height, ...params}) {
+    _init(daemon, {height, ...params} = {}) {
         super._init(params);
-        if (height !== undefined)
-            onUiScale(this, scale => (this.height = height * scale));
         this.daemon = daemon;
         this._active = false;
         this._timeouts = new Map();
@@ -81,6 +81,11 @@ export const Page = GObject.registerClass({
 
     /** Island width this page needs, or null for the standard width. */
     get preferredWidth() {
+        return null;
+    }
+
+    /** Island height this page needs, or null for the standard height. */
+    get preferredHeight() {
         return null;
     }
 

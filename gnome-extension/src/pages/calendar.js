@@ -19,8 +19,8 @@ import {Page} from './page.js';
 import {onHover} from './tasks.js';
 
 /** The month grid's height, shared by its rows; sizes in CSS pixels (see `px`). */
-const GRID_HEIGHT = 108;
-const MAX_ROW_HEIGHT = 21;
+const GRID_HEIGHT = 168;
+const MAX_ROW_HEIGHT = 28;
 /** Events of the desktop's calendars (blue), and Isle's own (orange), as RGB. */
 const SYSTEM_COLOR = [10, 132, 255];
 const OWN_COLOR = [255, 159, 10];
@@ -66,14 +66,14 @@ const alarmed = new Set();
 export const CalendarPage = GObject.registerClass({
     Signals: {'event-soon': {param_types: [GObject.TYPE_STRING]}},
 }, class CalendarPage extends Page {
-    _init(daemon, {height}) {
+    _init(daemon, {height} = {}) {
         super._init(daemon, {
             style_class: 'isle-page isle-calendar',
             layout_manager: new Clutter.BoxLayout(),
             height,
         });
         this.name = 'calendar';
-        onUiScale(this, scale => (this.layout_manager.spacing = 24 * scale));
+        onUiScale(this, scale => (this.layout_manager.spacing = 28 * scale));
         this._today = startOfDay(new Date());
         /** The day whose events are listed. */
         this._selected = this._today;
@@ -100,6 +100,21 @@ export const CalendarPage = GObject.registerClass({
             this._shownMonth = this._shownAgenda = null;
             this._refresh();
         }, {now: false});
+    }
+
+    get preferredWidth() {
+        return px(660);
+    }
+
+    get preferredHeight() {
+        const baseHeight = 245;
+        if (!this._selected || !this.daemon?.state)
+            return baseHeight;
+        const events = this._eventsOn(this._selected);
+        if (events.length <= 4)
+            return baseHeight;
+        const agendaNeeded = 76 + events.length * 32;
+        return Math.max(baseHeight, agendaNeeded);
     }
 
     /** Minutes before an event with a time that `event-soon` is emitted; 0 turns it off. */
@@ -181,9 +196,9 @@ export const CalendarPage = GObject.registerClass({
         onUiScale(titleButton, scale => (titleButton.translation_x = -4 * scale));
         header.add_child(titleButton);
         header.add_child(iconButton('isle-chevron-left-symbolic', 'isle-button-flat isle-cal-arrow',
-            () => this._moveMonth(-1), {size: 11, accessibleName: 'Previous month'}));
+            () => this._moveMonth(-1), {size: 13, accessibleName: 'Previous month'}));
         header.add_child(iconButton('isle-chevron-right-symbolic', 'isle-button-flat isle-cal-arrow',
-            () => this._moveMonth(1), {size: 11, accessibleName: 'Next month'}));
+            () => this._moveMonth(1), {size: 13, accessibleName: 'Next month'}));
         column.add_child(header);
 
         const weekdays = new St.BoxLayout({style_class: 'isle-cal-weekdays'});
@@ -242,8 +257,8 @@ export const CalendarPage = GObject.registerClass({
         this._scroll = new St.ScrollView({
             style_class: 'isle-cal-scroll',
             hscrollbar_policy: St.PolicyType.NEVER,
-            // Scrolls with the wheel or touchpad; no scrollbar over the rows.
-            vscrollbar_policy: St.PolicyType.EXTERNAL,
+            vscrollbar_policy: St.PolicyType.AUTOMATIC,
+            overlay_scrollbars: true,
             x_expand: true,
             y_expand: true,
         });
@@ -400,6 +415,7 @@ export const CalendarPage = GObject.registerClass({
         if (agenda !== this._shownAgenda) {
             this._shownAgenda = agenda;
             this._renderAgenda(events);
+            this.emit('height-changed');
         }
         this._noAccounts.visible = this._source?.hasCalendars === false;
     }
