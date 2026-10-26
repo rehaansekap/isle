@@ -1055,6 +1055,8 @@ export class Controller {
      * pointer goes there to press or read it, not to open the island. */
     get _alertHoldsHover() {
         const alert = this._alert;
+        if (alert?.kind === 'notification')
+            return false;
         return this._presentation === 'peek' &&
             Boolean(alert?.action || alert?.actions?.length || (alert?.onActivate && !alert.page));
     }

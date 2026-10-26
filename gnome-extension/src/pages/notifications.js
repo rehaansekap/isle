@@ -228,6 +228,15 @@ class NotificationsPage extends Page {
 
         const line = new St.BoxLayout({style_class: 'isle-notification-line', x_expand: true, y_align: Clutter.ActorAlign.CENTER});
 
+        const openApp = () => {
+            notification.activate();
+            if (notification.source?.app?.activate)
+                notification.source.app.activate();
+            else if (notification.source?.open)
+                notification.source.open();
+            this.emit('request-close');
+        };
+
         // App icon & title: clicking activates the notification and opens the app
         const titleButton = new St.Button({
             style_class: 'isle-notification-click-area',
@@ -240,10 +249,7 @@ class NotificationsPage extends Page {
         titleLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
         titleBox.add_child(titleLabel);
         titleButton.set_child(titleBox);
-        titleButton.connect('clicked', () => {
-            notification.activate();
-            this.emit('request-close');
-        });
+        titleButton.connect('clicked', () => openApp());
         line.add_child(titleButton);
 
         // Body preview: clicking expands the notification to show full message
@@ -269,6 +275,11 @@ class NotificationsPage extends Page {
         // The time, and in its place under the pointer the buttons and ×.
         const corner = new St.Widget({layout_manager: new Clutter.BinLayout(), y_align: Clutter.ActorAlign.CENTER});
         const time = label(Format.ago(notification.datetime), 'isle-notification-time', {x_align: Clutter.ActorAlign.END});
+        time.connect('destroy', () => {
+            const idx = this._times.findIndex(([t]) => t === time);
+            if (idx !== -1)
+                this._times.splice(idx, 1);
+        });
         this._times.push([time, notification.datetime]);
         corner.add_child(time);
         const tools = new St.BoxLayout({style_class: 'isle-notification-tools', x_align: Clutter.ActorAlign.END, opacity: 0, visible: false});
@@ -344,13 +355,24 @@ class NotificationsPage extends Page {
         title.clutter_text.ellipsize = Pango.EllipsizeMode.END;
         titleBox.add_child(title);
         titleButton.set_child(titleBox);
-        titleButton.connect('clicked', () => {
+        const openApp = () => {
             notification.activate();
+            if (notification.source?.app?.activate)
+                notification.source.app.activate();
+            else if (notification.source?.open)
+                notification.source.open();
             this.emit('request-close');
-        });
+        };
+
+        titleButton.connect('clicked', () => openApp());
         header.add_child(titleButton);
 
         const time = label(Format.ago(notification.datetime), 'isle-notification-time', {x_align: Clutter.ActorAlign.END, y_align: Clutter.ActorAlign.CENTER});
+        time.connect('destroy', () => {
+            const idx = this._times.findIndex(([t]) => t === time);
+            if (idx !== -1)
+                this._times.splice(idx, 1);
+        });
         this._times.push([time, notification.datetime]);
         header.add_child(time);
 
@@ -379,7 +401,7 @@ class NotificationsPage extends Page {
             const bodyLabel = label(rawBody, 'isle-notification-expanded-body', {x_expand: true});
             wrapLines(bodyLabel, Pango.EllipsizeMode.NONE);
             bodyBox.set_child(bodyLabel);
-            bodyBox.connect('clicked', () => onCollapse());
+            bodyBox.connect('clicked', () => openApp());
             card.add_child(bodyBox);
         }
 
@@ -421,13 +443,6 @@ class NotificationsPage extends Page {
         if (this._stale) {
             this._update();
         } else {
-            this._times = this._times.filter(([time]) => {
-                try {
-                    return !time.is_finalized?.() && Boolean(time.get_parent?.());
-                } catch {
-                    return false;
-                }
-            });
             this._times.forEach(([time, datetime]) => {
                 try {
                     time.text = Format.ago(datetime);

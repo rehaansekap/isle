@@ -295,8 +295,13 @@ export function notification(item, urgent, {onShown, onWithdrawn}, shared = fals
         duration: urgent ? CRITICAL_DURATION : item.isTransient ? TRANSIENT_NOTIFICATION_DURATION : NOTIFICATION_DURATION,
         page: 'notifications',
         onActivate: () => {
-            if (!withdrawn.has(item))
+            if (!withdrawn.has(item)) {
                 item.activate();
+                if (item.source?.app?.activate)
+                    item.source.app.activate();
+                else if (item.source?.open)
+                    item.source.open();
+            }
         },
         item,
         // When its turn comes: gone if withdrawn or read meanwhile, else as it reads now (an app may have
