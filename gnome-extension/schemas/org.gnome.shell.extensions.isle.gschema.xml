@@ -10,6 +10,11 @@
       <summary>Top bar style</summary>
       <description>“glass”: see-through, with no colour of its own, with the island as a black notch hanging from the top of the screen. “black”: the island blends into a black bar. (A “theme” setting from before 0.7.3 reads as glass.)</description>
     </key>
+    <key name="glass-pills" type="b">
+      <default>true</default>
+      <summary>Pill style on glass top bar</summary>
+      <description>Enclose workspace indicator, grouped tray apps, and system icons in solid black pills when top bar is glass.</description>
+    </key>
     <key name="compact-top-bar" type="b">
       <default>true</default>
       <summary>Compact top bar</summary>

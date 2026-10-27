@@ -133,6 +133,136 @@
   -minimum-hpadding: 5px;
 }
 
+/* ── Floating Island Pills on Glass Top Bar ────────────── */
+
+#panel.isle-glass-pills {
+  background-color: transparent !important;
+}
+
+/* Base pill styling with 100% solid black background matching Dynamic Island */
+#panel.isle-glass-pills #panelActivities,
+#panel.isle-glass-pills .isle-workspace-pill,
+#panel.isle-glass-pills .isle-pill,
+#panel.isle-glass-pills .isle-tray-pill,
+#panel.isle-glass-pills .isle-system-pill,
+#panel.isle-glass-pills #panelSystem {
+  background-color: #000000 !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  border-radius: 999px !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4) !important;
+  transition-duration: 150ms;
+  margin-top: 3px !important;
+  margin-bottom: 3px !important;
+  height: 26px !important;
+}
+
+#panel.isle-glass-pills.isle-compact-bar #panelActivities,
+#panel.isle-glass-pills.isle-compact-bar .isle-workspace-pill,
+#panel.isle-glass-pills.isle-compact-bar .isle-pill,
+#panel.isle-glass-pills.isle-compact-bar .isle-tray-pill,
+#panel.isle-glass-pills.isle-compact-bar .isle-system-pill,
+#panel.isle-glass-pills.isle-compact-bar #panelSystem {
+  margin-top: 2px !important;
+  margin-bottom: 2px !important;
+  height: 22px !important;
+}
+
+/* Crisp icons inside solid black pills */
+#panel.isle-glass-pills #panelActivities,
+#panel.isle-glass-pills .isle-workspace-pill,
+#panel.isle-glass-pills .isle-tray-pill,
+#panel.isle-glass-pills .isle-system-pill,
+#panel.isle-glass-pills #panelSystem,
+#panel.isle-glass-pills .isle-tray-pill .panel-button,
+#panel.isle-glass-pills .isle-system-pill .system-status-icon,
+#panel.isle-glass-pills #panelSystem .system-status-icon {
+  text-shadow: none !important;
+  icon-shadow: none !important;
+}
+
+/* Left: Workspace Pill */
+#panel.isle-glass-pills #panelActivities,
+#panel.isle-glass-pills .isle-workspace-pill {
+  margin-left: 8px;
+  margin-right: 6px;
+  padding: 0 12px !important;
+  -natural-hpadding: 12px !important;
+  -minimum-hpadding: 8px !important;
+}
+
+#panel.isle-glass-pills #panelActivities:hover,
+#panel.isle-glass-pills #panelActivities:focus,
+#panel.isle-glass-pills .isle-workspace-pill:hover,
+#panel.isle-glass-pills .isle-workspace-pill:focus {
+  background-color: #1a1a1c !important;
+  border-color: rgba(255, 255, 255, 0.18) !important;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5) !important;
+}
+
+#panel.isle-glass-pills #panelActivities:active,
+#panel.isle-glass-pills #panelActivities:checked,
+#panel.isle-glass-pills .isle-workspace-pill:active,
+#panel.isle-glass-pills .isle-workspace-pill:checked {
+  background-color: #262628 !important;
+  border-color: rgba(255, 255, 255, 0.25) !important;
+}
+
+/* Right: Grouped Tray Apps Pill */
+#panel.isle-glass-pills .isle-tray-pill {
+  margin-left: 6px;
+  margin-right: 6px;
+  padding: 0 4px !important;
+  spacing: 2px;
+}
+
+#panel.isle-glass-pills .isle-tray-pill .panel-button {
+  border: none !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+  border-radius: 999px !important;
+  margin: 0 !important;
+  padding: 0 5px !important;
+  -natural-hpadding: 5px !important;
+  -minimum-hpadding: 3px !important;
+}
+
+#panel.isle-glass-pills .isle-tray-pill .panel-button:hover,
+#panel.isle-glass-pills .isle-tray-pill .panel-button:focus {
+  background-color: rgba(255, 255, 255, 0.15) !important;
+}
+
+#panel.isle-glass-pills .isle-tray-pill .panel-button:active,
+#panel.isle-glass-pills .isle-tray-pill .panel-button:checked {
+  background-color: rgba(255, 255, 255, 0.25) !important;
+}
+
+/* Right (Far Right): System Icons Pill (Quick Settings) */
+#panel.isle-glass-pills .isle-system-pill,
+#panel.isle-glass-pills #panelSystem {
+  margin-left: 6px;
+  margin-right: 8px;
+  padding: 0 10px !important;
+  -natural-hpadding: 10px !important;
+  -minimum-hpadding: 6px !important;
+}
+
+#panel.isle-glass-pills .isle-system-pill:hover,
+#panel.isle-glass-pills .isle-system-pill:focus,
+#panel.isle-glass-pills #panelSystem:hover,
+#panel.isle-glass-pills #panelSystem:focus {
+  background-color: #1a1a1c !important;
+  border-color: rgba(255, 255, 255, 0.18) !important;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5) !important;
+}
+
+#panel.isle-glass-pills .isle-system-pill:active,
+#panel.isle-glass-pills .isle-system-pill:checked,
+#panel.isle-glass-pills #panelSystem:active,
+#panel.isle-glass-pills #panelSystem:checked {
+  background-color: #262628 !important;
+  border-color: rgba(255, 255, 255, 0.25) !important;
+}
+
 /* ── Compact ──────────────────────────────────────────── */
 
 .isle-compact-row { padding: 0 16px; spacing: 10px; }

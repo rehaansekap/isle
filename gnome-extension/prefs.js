@@ -272,6 +272,14 @@ export default class IslePreferences extends ExtensionPreferences {
             ['glass', 'Glass'],
             ['black', 'Black'],
         ]));
+        const glassPillsRow = switchRow(settings, 'glass-pills', 'Pill style on glass top bar',
+            'Enclose workspace, tray apps, and system icons in solid black pills when top bar is glass');
+        look.add(glassPillsRow);
+        const syncGlassPillsSensitivity = () => {
+            glassPillsRow.sensitive = settings.get_string('top-bar-style') === 'glass';
+        };
+        syncGlassPillsSensitivity();
+        settings.connect('changed::top-bar-style', syncGlassPillsSensitivity);
         look.add(switchRow(settings, 'compact-top-bar', 'Compact top bar', 'A slimmer top bar that frames the island like a bezel'));
         look.add(switchRow(settings, 'island-in-top-bar', 'Island inside the top bar',
             'Like a notch: the closed island never covers windows'));

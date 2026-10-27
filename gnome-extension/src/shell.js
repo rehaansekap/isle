@@ -3,7 +3,9 @@
 // Integration with GNOME Shell itself: the top bar, the volume/brightness
 // OSD and keyboard state. Everything here is undone in `destroy()`.
 
+import Clutter from 'gi://Clutter';
 import GLib from 'gi://GLib';
+import St from 'gi://St';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as Signals from 'resource:///org/gnome/shell/misc/signals.js';
@@ -21,6 +23,12 @@ const BAR_STYLES = {
 };
 /** Style class giving the glass bar's text a shadow to read on any wallpaper. */
 const GLASS_BAR_CLASS = 'isle-glass-bar';
+/** Style class enabling floating pills on the glass bar. */
+const GLASS_PILLS_BAR_CLASS = 'isle-glass-pills';
+/** Style class applied to the workspace indicator button. */
+const WORKSPACE_PILL_CLASS = 'isle-workspace-pill';
+/** Style class applied to the quick settings button. */
+const SYSTEM_PILL_CLASS = 'isle-system-pill';
 /** Style class making the top bar slimmer; see stylesheet.css. */
 const COMPACT_BAR_CLASS = 'isle-compact-bar';
 /** Style class making the top bar as tall as the closed island. */
@@ -46,12 +54,17 @@ export class TopBar extends Signals.EventEmitter {
             this._panelBox.connect('notify::visible', () => this._onPanelVisibility()),
         ];
 
+        this._trayPill = null;
+        this._trayWatchId = null;
+        this._cleaningUpTray = false;
+
         this._settingsChanged = [
             settings.connect('changed::top-bar-style', () => {
                 this._yielded = false;
                 this._applyStyle();
                 this.emit('style-changed');
             }),
+            settings.connect('changed::glass-pills', () => this._applyStyle()),
             settings.connect('changed::compact-top-bar', () => this._applyStyle()),
             settings.connect('changed::island-in-top-bar', () => this._applyStyle()),
         ];
@@ -134,12 +147,138 @@ export class TopBar extends Signals.EventEmitter {
 
     _applyStyle() {
         this._syncColor();
+        const glass = this._settings.get_string('top-bar-style') === 'glass';
+        const glassPills = glass && this._settings.get_boolean('glass-pills');
         // The bar's height changes with these; `height-changed` re-lays out the island.
         setStyleClasses(Main.panel, {
             [COMPACT_BAR_CLASS]: this._settings.get_boolean('compact-top-bar'),
             [NOTCH_BAR_CLASS]: this._settings.get_boolean('island-in-top-bar'),
-            [GLASS_BAR_CLASS]: this._settings.get_string('top-bar-style') === 'glass',
+            [GLASS_BAR_CLASS]: glass,
+            [GLASS_PILLS_BAR_CLASS]: glassPills,
         });
+        this._syncPills(glassPills);
+    }
+
+    _syncPills(glassPills) {
+        const activities = Main.panel.statusArea.activities;
+        const quickSettings = Main.panel.statusArea.quickSettings;
+
+        if (glassPills) {
+            if (activities) {
+                activities.add_style_class_name(WORKSPACE_PILL_CLASS);
+                activities.add_style_class_name('isle-pill');
+            }
+            if (quickSettings) {
+                quickSettings.add_style_class_name(SYSTEM_PILL_CLASS);
+                quickSettings.add_style_class_name('isle-pill');
+                quickSettings.name = 'panelSystem';
+            }
+            this._setupTrayPill();
+        } else {
+            if (activities) {
+                activities.remove_style_class_name(WORKSPACE_PILL_CLASS);
+                activities.remove_style_class_name('isle-pill');
+            }
+            if (quickSettings) {
+                quickSettings.remove_style_class_name(SYSTEM_PILL_CLASS);
+                quickSettings.remove_style_class_name('isle-pill');
+                if (quickSettings.name === 'panelSystem')
+                    quickSettings.name = null;
+            }
+            this._teardownTrayPill();
+        }
+    }
+
+    _setupTrayPill() {
+        const rightBox = Main.panel._rightBox;
+        if (!rightBox)
+            return;
+
+        const qs = Main.panel.statusArea.quickSettings;
+        const qsContainer = qs?.container ?? qs;
+
+        if (!this._trayPill) {
+            this._trayPill = new St.BoxLayout({
+                name: 'isleTrayPill',
+                style_class: 'isle-pill isle-tray-pill',
+                y_align: Clutter.ActorAlign.FILL,
+                y_expand: true,
+            });
+            this._trayPill.connect('child-added', () => this._updateTrayPillVisibility());
+            this._trayPill.connect('child-removed', () => this._updateTrayPillVisibility());
+        }
+
+        // Reparent existing tray indicators into this._trayPill
+        const children = [...rightBox.get_children()];
+        for (const child of children) {
+            if (child !== this._trayPill && child !== qsContainer) {
+                rightBox.remove_child(child);
+                this._trayPill.add_child(child);
+            }
+        }
+
+        // Insert _trayPill into rightBox right before quickSettings
+        if (this._trayPill.get_parent() !== rightBox) {
+            if (qsContainer && rightBox.contains(qsContainer))
+                rightBox.insert_child_below(this._trayPill, qsContainer);
+            else
+                rightBox.add_child(this._trayPill);
+        }
+
+        this._updateTrayPillVisibility();
+
+        if (!this._trayWatchId) {
+            this._trayWatchId = rightBox.connect('child-added', (_box, child) => {
+                if (child === this._trayPill || child === qsContainer || this._cleaningUpTray)
+                    return;
+                GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+                    if (this._trayPill && child.get_parent() === rightBox) {
+                        rightBox.remove_child(child);
+                        this._trayPill.add_child(child);
+                        this._updateTrayPillVisibility();
+                    }
+                    return GLib.SOURCE_REMOVE;
+                });
+            });
+        }
+    }
+
+    _updateTrayPillVisibility() {
+        if (!this._trayPill)
+            return;
+        const count = this._trayPill.get_children().filter(c => c.visible).length;
+        this._trayPill.visible = count > 0;
+    }
+
+    _teardownTrayPill() {
+        if (this._trayWatchId) {
+            Main.panel._rightBox?.disconnect(this._trayWatchId);
+            this._trayWatchId = null;
+        }
+
+        if (this._trayPill) {
+            this._cleaningUpTray = true;
+            const rightBox = Main.panel._rightBox;
+            const qs = Main.panel.statusArea.quickSettings;
+            const qsContainer = qs?.container ?? qs;
+
+            const children = [...this._trayPill.get_children()];
+            for (const child of children) {
+                this._trayPill.remove_child(child);
+                if (rightBox) {
+                    if (qsContainer && rightBox.contains(qsContainer))
+                        rightBox.insert_child_below(child, qsContainer);
+                    else
+                        rightBox.add_child(child);
+                }
+            }
+
+            if (this._trayPill.get_parent())
+                this._trayPill.get_parent().remove_child(this._trayPill);
+            this._trayPill.destroy();
+            this._trayPill = null;
+            this._cleaningUpTray = false;
+        }
     }
 
     // Another extension that sets the bar's style too would undo Isle's rule each time Isle set it, in a
@@ -181,10 +320,12 @@ export class TopBar extends Signals.EventEmitter {
         this._settings.disconnect(this._superVChanged);
         this._restoreToggle();
 
+        this._syncPills(false);
+
         // No colour of Isle's: the theme's again.
         this._syncColor(null);
         setStyleClasses(Main.panel, {
-            [COMPACT_BAR_CLASS]: false, [NOTCH_BAR_CLASS]: false, [GLASS_BAR_CLASS]: false,
+            [COMPACT_BAR_CLASS]: false, [NOTCH_BAR_CLASS]: false, [GLASS_BAR_CLASS]: false, [GLASS_PILLS_BAR_CLASS]: false,
         });
         this._dateMenu.set_width(-1);
         this._dateMenu.opacity = 255;
