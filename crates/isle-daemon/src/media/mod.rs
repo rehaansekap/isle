@@ -14,7 +14,7 @@ use tokio::sync::mpsc;
 use zbus::zvariant::OwnedObjectPath;
 use zbus::{fdo, interface};
 
-pub use self::lyrics::Lyrics;
+pub use self::lyrics::{Lyrics, LyricsProvider};
 pub use self::mpris::watch;
 use self::mpris::{PlayerProxy, bounded};
 
@@ -90,6 +90,8 @@ pub enum Wish {
     Player(String),
     /// Look lyrics up online, or not.
     Lyrics(bool),
+    /// Which provider looks up lyrics online.
+    LyricsProvider(LyricsProvider),
 }
 
 #[derive(Default)]
@@ -166,9 +168,19 @@ impl MediaService {
         self.wish(Wish::Player(name.to_owned()))
     }
 
-    /// Whether lyrics are looked up online (LRCLIB); off, the lyrics say so instead.
+    /// Whether lyrics are looked up online; off, the lyrics say so instead.
     fn set_lyrics(&self, enabled: bool) -> fdo::Result<()> {
         self.wish(Wish::Lyrics(enabled))
+    }
+
+    /// Sets which provider to use: 'auto' (Lyrics Plus), 'netease', or 'lrclib'.
+    fn set_lyrics_provider(&self, provider: &str) -> fdo::Result<()> {
+        let p = match provider {
+            "netease" => LyricsProvider::Netease,
+            "lrclib" => LyricsProvider::Lrclib,
+            _ => LyricsProvider::Auto,
+        };
+        self.wish(Wish::LyricsProvider(p))
     }
 
     /// Brings the player's window to the front.

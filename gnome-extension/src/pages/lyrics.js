@@ -29,7 +29,7 @@ const INTRO_MS = 3000;
 /** What the view says when there are no lines to show. */
 const STATES = {
     loading: {dots: true, title: 'Looking for lyrics'},
-    not_found: {icon: 'isle-lyrics', title: 'No lyrics for this song', hint: 'Lyrics come from LRCLIB'},
+    not_found: {icon: 'isle-lyrics', title: 'No lyrics for this song', hint: 'Lyrics provided by Lyrics Plus'},
     instrumental: {icon: 'isle-music', title: 'Instrumental', hint: 'Nothing to sing along to'},
     off: {icon: 'isle-lyrics', title: 'Lyrics are off', hint: 'Turn them on in Isle’s settings'},
     error: {icon: 'isle-lyrics', title: 'Can’t reach the lyrics', hint: 'Check your connection · trying again soon'},

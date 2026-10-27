@@ -491,8 +491,10 @@ export class Controller {
                 this._syncUsage();
             else if (name === 'updates')
                 this._syncUpdates();
-            else if (name === 'media')
+            else if (name === 'media') {
                 this._daemon.call('media', 'SetLyrics', this._settings.get_boolean('lyrics-online'));
+                this._daemon.call('media', 'SetLyricsProvider', this._settings.get_string('lyrics-provider'));
+            }
             else if (name === 'agents')
                 this._syncAgents(true);
         });
@@ -513,6 +515,8 @@ export class Controller {
         this._settingsChanged.push(this._settings.connect('changed::check-updates', () => this._syncUpdates()));
         this._settingsChanged.push(this._settings.connect('changed::lyrics-online', () =>
             this._daemon.call('media', 'SetLyrics', this._settings.get_boolean('lyrics-online'))));
+        this._settingsChanged.push(this._settings.connect('changed::lyrics-provider', () =>
+            this._daemon.call('media', 'SetLyricsProvider', this._settings.get_string('lyrics-provider'))));
         this._voice.connect('orb-clicked', () => this._onVoiceKey());
         // The × on an answer or an alert puts it away, as a click on the answer or a right click on the alert does.
         this._voice.connect('close-requested', () => this.collapse());

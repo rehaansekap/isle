@@ -149,26 +149,331 @@ impl Failure {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LyricsProvider {
+    /// NetEase first, fallback to LRCLIB (Lyrics Plus mode)
+    #[default]
+    Auto,
+    Netease,
+    Lrclib,
+}
+
+impl LyricsProvider {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Netease => "netease",
+            Self::Lrclib => "lrclib",
+        }
+    }
+}
+
+const NETEASE_REFERER: &str = "https://music.163.com/";
+const NETEASE_UA: &str =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36";
+
+#[derive(Deserialize, Clone)]
+struct NeteaseArtist {
+    name: Option<String>,
+}
+
+#[derive(Deserialize, Clone)]
+struct NeteaseAlbum {
+    #[allow(dead_code)]
+    name: Option<String>,
+}
+
+#[derive(Deserialize, Clone)]
+struct NeteaseSong {
+    id: u64,
+    #[allow(dead_code)]
+    name: Option<String>,
+    #[serde(default)]
+    artists: Vec<NeteaseArtist>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    album: Option<NeteaseAlbum>,
+    #[serde(default)]
+    duration: Option<f64>,
+}
+
+#[derive(Deserialize, Default)]
+struct NeteaseSearchResult {
+    #[serde(default)]
+    songs: Option<Vec<NeteaseSong>>,
+}
+
+#[derive(Deserialize)]
+struct NeteaseSearchResponse {
+    #[serde(default)]
+    result: Option<NeteaseSearchResult>,
+}
+
+#[derive(Deserialize)]
+struct NeteaseLrc {
+    #[serde(default)]
+    lyric: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NeteaseLyricResponse {
+    #[serde(default)]
+    lrc: Option<NeteaseLrc>,
+    #[serde(default)]
+    pure_music: Option<bool>,
+    #[serde(default)]
+    nolyric: Option<bool>,
+    #[serde(default)]
+    uncollected: Option<bool>,
+}
+
+fn best_netease_match(songs: Vec<NeteaseSong>, length_s: f64, artist: &str) -> Option<NeteaseSong> {
+    let fits = |song: &NeteaseSong| {
+        length_s <= 0.0
+            || song
+                .duration
+                .is_none_or(|d| (d / 1000.0 - length_s).abs() <= DURATION_TOLERANCE)
+    };
+    let artist = artist.to_lowercase();
+    let same_artist = |song: &NeteaseSong| {
+        !artist.is_empty()
+            && song.artists.iter().any(|a| {
+                a.name
+                    .as_deref()
+                    .is_some_and(|name| name.to_lowercase().contains(&artist))
+            })
+    };
+    let score = |song: &NeteaseSong| (same_artist(song), fits(song));
+
+    songs
+        .iter()
+        .filter(|s| fits(s))
+        .max_by_key(|s| score(s))
+        .cloned()
+        .or_else(|| {
+            songs
+                .iter()
+                .filter(|s| same_artist(s))
+                .max_by_key(|s| score(s))
+                .cloned()
+        })
+        .or_else(|| songs.into_iter().next())
+}
+
+fn netease_search(title: &str, artist: &str, duration_s: f64) -> Result<Option<u64>, Failure> {
+    let keyword = format!("{title} {artist}");
+    let url_163 = "http://music.163.com/api/search/suggest/web";
+    let resp = crate::http::get(url_163, TIMEOUT)
+        .config()
+        .user_agent(NETEASE_UA)
+        .http_status_as_error(false)
+        .build()
+        .header("Referer", NETEASE_REFERER)
+        .query_pairs([("s", keyword.as_str()), ("limit", "5")])
+        .call();
+
+    let songs = match resp {
+        Ok(mut res) if res.status().as_u16() == 200 => res
+            .body_mut()
+            .read_json::<NeteaseSearchResponse>()
+            .ok()
+            .and_then(|r| r.result)
+            .and_then(|r| r.songs)
+            .unwrap_or_default(),
+        _ => {
+            let url_mirror = "https://neteasecloudmusic.api.soraharu.com/search";
+            let mirror_resp = crate::http::get(url_mirror, TIMEOUT)
+                .config()
+                .user_agent(NETEASE_UA)
+                .http_status_as_error(false)
+                .build()
+                .query_pairs([
+                    ("keywords", keyword.as_str()),
+                    ("type", "1"),
+                    ("limit", "5"),
+                ])
+                .call();
+            match mirror_resp {
+                Ok(mut res) if res.status().as_u16() == 200 => res
+                    .body_mut()
+                    .read_json::<NeteaseSearchResponse>()
+                    .ok()
+                    .and_then(|r| r.result)
+                    .and_then(|r| r.songs)
+                    .unwrap_or_default(),
+                Ok(res) => {
+                    return Err(Failure::Service(format!(
+                        "NetEase search answered HTTP {}",
+                        res.status()
+                    )))
+                }
+                Err(err) => return Err(Failure::Network(err)),
+            }
+        }
+    };
+
+    if songs.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(best_netease_match(songs, duration_s, artist).map(|s| s.id))
+}
+
+fn netease_lyric(id: u64) -> Result<Option<NeteaseLyricResponse>, Failure> {
+    let id_str = id.to_string();
+    let url_163 = "http://music.163.com/api/song/lyric";
+    let resp = crate::http::get(url_163, TIMEOUT)
+        .config()
+        .user_agent(NETEASE_UA)
+        .http_status_as_error(false)
+        .build()
+        .header("Referer", NETEASE_REFERER)
+        .query_pairs([
+            ("id", id_str.as_str()),
+            ("lv", "-1"),
+            ("kv", "-1"),
+            ("tv", "-1"),
+        ])
+        .call();
+
+    match resp {
+        Ok(mut res) if res.status().as_u16() == 200 => {
+            match res.body_mut().read_json::<NeteaseLyricResponse>() {
+                Ok(data) => Ok(Some(data)),
+                Err(ureq::Error::Json(err)) => {
+                    Err(Failure::Service(format!("NetEase sent unreadable lyric: {err}")))
+                }
+                Err(err) => Err(Failure::Network(err)),
+            }
+        }
+        _ => {
+            let url_mirror = "https://neteasecloudmusic.api.soraharu.com/lyric";
+            let mirror_resp = crate::http::get(url_mirror, TIMEOUT)
+                .config()
+                .user_agent(NETEASE_UA)
+                .http_status_as_error(false)
+                .build()
+                .query_pairs([("id", id_str.as_str())])
+                .call();
+
+            match mirror_resp {
+                Ok(mut res) if res.status().as_u16() == 200 => {
+                    match res.body_mut().read_json::<NeteaseLyricResponse>() {
+                        Ok(data) => Ok(Some(data)),
+                        Err(ureq::Error::Json(err)) => Err(Failure::Service(format!(
+                            "NetEase mirror sent unreadable lyric: {err}"
+                        ))),
+                        Err(err) => Err(Failure::Network(err)),
+                    }
+                }
+                Ok(res) if res.status().as_u16() == 404 => Ok(None),
+                Ok(res) => Err(Failure::Service(format!(
+                    "NetEase lyric answered HTTP {}",
+                    res.status()
+                ))),
+                Err(err) => Err(Failure::Network(err)),
+            }
+        }
+    }
+}
+
+fn lookup_netease(query: &TrackQuery, title: &str, artist: &str) -> Result<Lyrics, Failure> {
+    let song_id = match netease_search(title, artist, query.length_s)? {
+        Some(id) => id,
+        None => return Ok(query.status(LyricsStatus::NotFound)),
+    };
+
+    let lyric_data = match netease_lyric(song_id)? {
+        Some(data) => data,
+        None => return Ok(query.status(LyricsStatus::NotFound)),
+    };
+
+    if lyric_data.pure_music.unwrap_or(false) || lyric_data.nolyric.unwrap_or(false) {
+        return Ok(query.status(LyricsStatus::Instrumental));
+    }
+    if lyric_data.uncollected.unwrap_or(false) {
+        return Ok(query.status(LyricsStatus::NotFound));
+    }
+
+    if let Some(lrc_text) = lyric_data.lrc.and_then(|l| l.lyric) {
+        if lrc_text.contains("暂无歌词") || lrc_text.trim().is_empty() {
+            return Ok(query.status(LyricsStatus::NotFound));
+        }
+
+        let lines = lrc::parse(&lrc_text);
+        if !lines.is_empty() {
+            return Ok(Lyrics {
+                track: query.key(),
+                status: LyricsStatus::Synced,
+                lines,
+            });
+        }
+
+        let plain = lrc::plain(&lrc_text);
+        if !plain.is_empty() {
+            return Ok(Lyrics {
+                track: query.key(),
+                status: LyricsStatus::Plain,
+                lines: plain,
+            });
+        }
+    }
+
+    Ok(query.status(LyricsStatus::NotFound))
+}
+
+fn lookup_lrclib(query: &TrackQuery, title: String, artist: String) -> Result<Lyrics, Failure> {
+    match lookup(query, title, artist) {
+        Ok(Some(record)) => Ok(from_record(query, record)),
+        Ok(None) => Ok(query.status(LyricsStatus::NotFound)),
+        Err(err) => Err(err),
+    }
+}
+
 /// Looks up lyrics, consulting the disk cache first. Blocking.
-pub fn fetch(query: &TrackQuery) -> Lyrics {
+pub fn fetch(query: &TrackQuery, provider: LyricsProvider) -> Lyrics {
     let (title, artist) = search_terms(&query.title, &query.artist);
     // Without an artist it is rarely a song (a browser tab called
     // "Instagram"), and searching would match any song of that name.
     if title.is_empty() || artist.is_empty() || query.length_s > LONGEST_SONG_S {
         return query.status(LyricsStatus::NotFound);
     }
-    let cache = cache_path(query);
+    let cache = cache_path(query, provider);
     if let Some(cached) = cached(&cache) {
         return cached;
     }
 
-    let lyrics = match lookup(query, title, artist) {
-        Ok(Some(record)) => from_record(query, record),
-        Ok(None) => query.status(LyricsStatus::NotFound),
-        Err(err) => {
-            warn!("lyrics lookup failed: {err}");
-            return query.status(err.status());
+    let lyrics = match provider {
+        LyricsProvider::Auto => {
+            // NetEase first (Option B as requested by user), fallback to LRCLIB
+            let ne_result = lookup_netease(query, &title, &artist);
+            match ne_result {
+                Ok(lyrics) if lyrics.status != LyricsStatus::NotFound => lyrics,
+                _ => match lookup_lrclib(query, title, artist) {
+                    Ok(lyrics) => lyrics,
+                    Err(err) => {
+                        warn!("LRCLIB fallback lookup failed: {err}");
+                        query.status(err.status())
+                    }
+                },
+            }
         }
+        LyricsProvider::Netease => match lookup_netease(query, &title, &artist) {
+            Ok(lyrics) => lyrics,
+            Err(err) => {
+                warn!("NetEase lyrics lookup failed: {err}");
+                query.status(err.status())
+            }
+        },
+        LyricsProvider::Lrclib => match lookup_lrclib(query, title, artist) {
+            Ok(lyrics) => lyrics,
+            Err(err) => {
+                warn!("LRCLIB lyrics lookup failed: {err}");
+                query.status(err.status())
+            }
+        },
     };
     // Misses too, with the file's time saying when (see `cached`).
     if let Some(parent) = cache.parent() {
@@ -354,10 +659,10 @@ fn from_record(query: &TrackQuery, record: Record) -> Lyrics {
     }
 }
 
-fn cache_path(query: &TrackQuery) -> PathBuf {
+fn cache_path(query: &TrackQuery, provider: LyricsProvider) -> PathBuf {
     cache_dir()
         .join("lyrics")
-        .join(format!("{:016x}.json", fnv1a(&query.key())))
+        .join(format!("{:016x}_{}.json", fnv1a(&query.key()), provider.as_str()))
 }
 
 #[cfg(test)]
@@ -420,7 +725,7 @@ mod tests {
             length_s: 3.0 * 60.0 * 60.0,
         };
         // Answered at once, without the network or the cache.
-        assert_eq!(fetch(&query).status, LyricsStatus::NotFound);
+        assert_eq!(fetch(&query, LyricsProvider::Auto).status, LyricsStatus::NotFound);
     }
 
     #[test]
@@ -470,4 +775,41 @@ mod tests {
         assert!(LyricsStatus::Unavailable.is_failure());
         assert!(!LyricsStatus::NotFound.is_failure());
     }
+
+    #[test]
+    fn netease_best_match_finds_correct_song() {
+        let songs = vec![
+            NeteaseSong {
+                id: 1,
+                name: Some("Wrong Song".into()),
+                artists: vec![NeteaseArtist { name: Some("Artist".into()) }],
+                album: None,
+                duration: Some(100_000.0),
+            },
+            NeteaseSong {
+                id: 2,
+                name: Some("Target Song".into()),
+                artists: vec![NeteaseArtist { name: Some("Artist".into()) }],
+                album: None,
+                duration: Some(200_000.0),
+            },
+        ];
+        let matched = best_netease_match(songs, 200.0, "Artist").unwrap();
+        assert_eq!(matched.id, 2);
+    }
+
+    #[test]
+    #[ignore]
+    fn real_netease_lookup() {
+        let query = TrackQuery {
+            title: "Bohemian Rhapsody".into(),
+            artist: "Queen".into(),
+            album: String::new(),
+            length_s: 355.0,
+        };
+        let lyrics = fetch(&query, LyricsProvider::Netease);
+        assert_eq!(lyrics.status, LyricsStatus::Synced);
+        assert!(!lyrics.lines.is_empty());
+    }
 }
+

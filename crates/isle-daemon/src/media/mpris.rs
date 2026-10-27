@@ -18,7 +18,7 @@ use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
 use zbus::{Connection, MatchRule, MessageStream, proxy};
 
 use super::gap::GapBridge;
-use super::lyrics::{self, Lyrics, LyricsStatus, TrackQuery};
+use super::lyrics::{self, Lyrics, LyricsProvider, LyricsStatus, TrackQuery};
 use super::{MediaService, NowPlaying, PlayerChoice, Wish, art};
 use crate::clock::now_ms;
 
@@ -144,6 +144,8 @@ struct Watcher {
     chosen: Option<OwnedBusName>,
     /// Whether lyrics are looked up online (Settings).
     lyrics_enabled: bool,
+    /// Which provider is used to look up lyrics.
+    lyrics_provider: LyricsProvider,
 }
 
 /// Runs forever, keeping `iface` in sync with the active player.
@@ -175,6 +177,7 @@ pub async fn watch(conn: Connection, iface: InterfaceRef<MediaService>) -> anyho
         gap_check: None,
         chosen: None,
         lyrics_enabled: true,
+        lyrics_provider: LyricsProvider::Auto,
     };
     let (wishes, mut wished) = mpsc::unbounded_channel();
     watcher.iface.get_mut().await.wishes = Some(wishes);
@@ -393,6 +396,12 @@ impl Watcher {
                 self.lyrics_lookup += 1;
             }
             Wish::Lyrics(_) => {}
+            Wish::LyricsProvider(provider) if provider != self.lyrics_provider => {
+                self.lyrics_provider = provider;
+                self.lyrics_query = None;
+                self.lyrics_lookup += 1;
+            }
+            Wish::LyricsProvider(_) => {}
         }
     }
 
@@ -573,8 +582,9 @@ impl Watcher {
         self.lyrics_lookup += 1;
         let lookup = self.lyrics_lookup;
         let events = self.events.clone();
+        let provider = self.lyrics_provider;
         tokio::task::spawn_blocking(move || {
-            let lyrics = lyrics::fetch(&query);
+            let lyrics = lyrics::fetch(&query, provider);
             let _ = events.send(Event::Lyrics { lookup, lyrics });
         });
     }

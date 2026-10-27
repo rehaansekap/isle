@@ -34,7 +34,17 @@
     <key name="lyrics-online" type="b">
       <default>true</default>
       <summary>Look up lyrics online</summary>
-      <description>From LRCLIB, by the song's title, artist and length.</description>
+      <description>Look up synced lyrics for the current song.</description>
+    </key>
+    <key name="lyrics-provider" type="s">
+      <choices>
+        <choice value="auto"/>
+        <choice value="netease"/>
+        <choice value="lrclib"/>
+      </choices>
+      <default>'auto'</default>
+      <summary>Lyrics provider</summary>
+      <description>Service used for synced lyrics lookup: 'auto' (Lyrics Plus: NetEase + LRCLIB fallback), 'netease', or 'lrclib'.</description>
     </key>
     <key name="check-updates" type="b">
       <default>true</default>

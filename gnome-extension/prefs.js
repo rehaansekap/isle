@@ -334,7 +334,15 @@ export default class IslePreferences extends ExtensionPreferences {
         ]));
         alerts.add(switchRow(settings, 'privacy-indicators', 'Privacy indicators', 'Dots when the camera, microphone or screen sharing is in use'));
         alerts.add(switchRow(settings, 'track-peek', 'New song', 'Briefly show the song when the track changes'));
-        alerts.add(switchRow(settings, 'lyrics-online', 'Lyrics', 'Look up the playing song’s lyrics on LRCLIB'));
+        alerts.add(switchRow(settings, 'lyrics-online', 'Lyrics', 'Look up the playing song’s lyrics online'));
+        const lyricsProvider = choiceRow(settings, 'lyrics-provider', 'Lyrics Provider',
+            'Source for synchronized lyrics lookup', [
+                ['auto', 'Lyrics Plus (NetEase + LRCLIB Fallback)'],
+                ['netease', 'NetEase Cloud Music (Spicetify)'],
+                ['lrclib', 'LRCLIB'],
+            ]);
+        settings.bind('lyrics-online', lyricsProvider, 'sensitive', Gio.SettingsBindFlags.GET);
+        alerts.add(lyricsProvider);
         alerts.add(switchRow(settings, 'chimes', 'Sounds', 'Chime when a focus session or break ends, and for reminders'));
         page.add(alerts);
 
