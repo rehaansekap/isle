@@ -304,6 +304,15 @@ export default class IslePreferences extends ExtensionPreferences {
         settings.connect('changed::open-on', byHover);
         byHover();
         look.add(delay);
+
+        const notifDelay = Adw.SpinRow.new_with_range(200, 3000, 50);
+        notifDelay.title = 'Notification hover before opening';
+        notifDelay.subtitle = 'In milliseconds. Click before this opens app; hover for this duration opens island';
+        settings.bind('notification-hover-delay', notifDelay, 'value', Gio.SettingsBindFlags.DEFAULT);
+        const byHoverNotif = () => (notifDelay.sensitive = settings.get_string('open-on') === 'hover');
+        settings.connect('changed::open-on', byHoverNotif);
+        byHoverNotif();
+        look.add(notifDelay);
         page.add(look);
 
         const alerts = new Adw.PreferencesGroup({title: 'Alerts'});

@@ -1064,12 +1064,19 @@ export class Controller {
     // Opens once the pointer rests on the island, so passing over it along the top bar opens nothing.
     _expandOnRest() {
         const [x, y] = global.get_pointer();
-        this._later('expand', this._settings.get_int('hover-delay'), () => {
+        const isNotification = this._presentation === 'peek' && this._alert?.kind === 'notification';
+        const delay = isNotification
+            ? (this._settings.get_int('notification-hover-delay') || 500)
+            : this._settings.get_int('hover-delay');
+        this._later('expand', delay, () => {
             if (this._alertHoldsHover)
                 return;
             const [nowX, nowY] = global.get_pointer();
-            // The assistant still at work: its progress, rather than the pages (as a click does).
-            const rested = Math.hypot(nowX - x, nowY - y) <= px(REST_DISTANCE_PX);
+            // For notifications, light cursor movement within the island still counts as hover;
+            // for regular island hover, resting within REST_DISTANCE_PX is required.
+            const rested = isNotification
+                ? this._island.hovered
+                : Math.hypot(nowX - x, nowY - y) <= px(REST_DISTANCE_PX);
             if (rested && this._voiceWorking)
                 this._reopenVoice({byHover: true});
             else if (rested)

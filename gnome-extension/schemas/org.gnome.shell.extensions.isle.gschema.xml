@@ -59,6 +59,12 @@
       <default>120</default>
       <summary>How long the pointer rests before the island opens, in milliseconds</summary>
     </key>
+    <key name="notification-hover-delay" type="i">
+      <range min="200" max="3000"/>
+      <default>500</default>
+      <summary>How long to hover on a notification alert before opening the island, in milliseconds</summary>
+      <description>When a notification appears, clicking before this delay opens its app; hovering for this duration opens the dynamic island.</description>
+    </key>
     <key name="island-monitor" type="s">
       <choices>
         <choice value="primary"/>
