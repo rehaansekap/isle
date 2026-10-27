@@ -81,9 +81,12 @@ export const CompactView = GObject.registerClass({
         this._elapsed = new St.Label({style_class: 'isle-compact-clock', x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER, visible: false});
         // How long the call has lasted, in green.
         this._callTime = new St.Label({style_class: 'isle-compact-clock isle-compact-call-time', x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER, visible: false});
+        // Pomodoro timer countdown, in place of the clock.
+        this._timerTime = new St.Label({style_class: 'isle-compact-clock isle-compact-timer-time', x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER, visible: false});
         times.add_child(this._clock);
         times.add_child(this._elapsed);
         times.add_child(this._callTime);
+        times.add_child(this._timerTime);
         // Do Not Disturb: a moon before the time (or what takes its place), as iOS shows a Focus, whatever the sides hold.
         this._moon = new St.Icon({gicon: icon('isle-moon'), icon_size: 14, style_class: 'isle-dnd-moon', y_align: Clutter.ActorAlign.CENTER, visible: false});
         const centerRow = new St.BoxLayout({style_class: 'isle-compact-clock-box', x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER});
@@ -133,6 +136,7 @@ export const CompactView = GObject.registerClass({
             this._tickCall();
             this._tickRecording();
             this._refreshRing();
+            this._tickTimer();
             this._tickSecond();
             // Measure what could not be off screen: the privacy dots' balance, a second time's width.
             const second = this._right.child === this._secondTimer || this._right.child === this._secondCall;
@@ -254,6 +258,7 @@ export const CompactView = GObject.registerClass({
         const timerActive = pomodoro && pomodoro.phase !== 'idle';
         const recording = this._privacy.recording;
         const onCall = this._call.active;
+        const timerInCenter = !recording && !onCall && timerActive;
         const widthBefore = this.preferredWidth;
 
         // The first activity that applies keeps the island: recording, a call, the music, the timer. The
@@ -269,8 +274,12 @@ export const CompactView = GObject.registerClass({
         if (this._left.child !== left)
             this._left.child = left;
         let right = primary === 'music' ? this._bars : null;
-        if (second)
-            right = {music: this._bars, timer: this._secondTimer, call: this._secondCall}[second];
+        if (second) {
+            if (second === 'timer' && timerInCenter)
+                right = primary === 'music' ? this._bars : null;
+            else
+                right = {music: this._bars, timer: this._secondTimer, call: this._secondCall}[second];
+        }
         if (onCall && this._call.muted)
             right = this._micOff;
         if (this._assistantBusy)
@@ -295,7 +304,7 @@ export const CompactView = GObject.registerClass({
             this._right.child = right;
         // The song's bars beside the timer's time, while the song is the first activity; set before
         // the right side is measured.
-        this._secondBars.visible = primary === 'music' && second === 'timer';
+        this._secondBars.visible = primary === 'music' && second === 'timer' && !timerInCenter;
         this._tickSecond();
         this._balanceSecond(right);
         if (!inSlot && !this._privacyDots.get_parent())
@@ -326,11 +335,21 @@ export const CompactView = GObject.registerClass({
             this._art.setPath(nowPlaying.art_path);
 
         if (recording) {
+            this._cancel('timer');
             this._crossfade(this._elapsed);
             this._tickRecording();
+        } else if (onCall) {
+            this._cancel('recording');
+            this._cancel('timer');
+            this._crossfade(this._callTime);
+        } else if (timerActive) {
+            this._cancel('recording');
+            this._tickTimer();
+            this._crossfade(this._timerTime);
         } else {
             this._cancel('recording');
-            this._crossfade(onCall ? this._callTime : this._clock);
+            this._cancel('timer');
+            this._crossfade(this._clock);
         }
         this._tickCall();
 
@@ -340,7 +359,7 @@ export const CompactView = GObject.registerClass({
 
     /** Fades `actor` in and the other centre actors out. */
     _crossfade(actor) {
-        for (const other of [this._clock, this._elapsed, this._callTime]) {
+        for (const other of [this._clock, this._elapsed, this._callTime, this._timerTime]) {
             if (other === actor) {
                 if (!other.visible) {
                     other.opacity = 0;
@@ -449,6 +468,29 @@ export const CompactView = GObject.registerClass({
         const elapsedMs = (GLib.get_monotonic_time() - this._call.since) / 1000;
         this._callTime.text = Format.duration(elapsedMs);
         this._later('call', 1000 - (elapsedMs % 1000) + 10, () => this._tickCall());
+    }
+
+    /** Shows the pomodoro countdown in the center, once a second while on screen and active. */
+    _tickTimer() {
+        const {pomodoro} = this._daemon.state;
+        const timerActive = pomodoro && pomodoro.phase !== 'idle';
+        if (!timerActive || this._privacy.recording || this._call.active) {
+            this._cancel('timer');
+            return;
+        }
+        const remaining = pomodoro.running ? Math.max(0, pomodoro.ends_at_ms - Format.nowMs()) : pomodoro.remaining_ms;
+        const [r, g, b] = timerColor(pomodoro.phase);
+        this._timerTime.text = Format.duration(remaining);
+        const style = `color: rgb(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)});`;
+        if (this._timerTime.style !== style)
+            this._timerTime.style = style;
+
+        if (pomodoro.running && this.mapped) {
+            const next = remaining % 1000 || 1000;
+            this._later('timer', next + 10, () => this._tickTimer());
+        } else {
+            this._cancel('timer');
+        }
     }
 
     /** Updates the clock, then sleeps until the minute changes. */

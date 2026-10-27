@@ -14,7 +14,7 @@
 
 /* Tabular figures for numbers that change or line up, so they hold still; prose keeps proportional
  * ones ("11:10" and "isle-0.9.1" would space out). */
-.isle-compact-clock, .isle-compact-second-time, .isle-header-time, .isle-recording-time,
+.isle-compact-clock, .isle-compact-second-time, .isle-compact-timer-time, .isle-header-time, .isle-recording-time,
 .isle-timer-time, .isle-stepper-value, .isle-time, .isle-volume-text, .isle-peek-value,
 .isle-call-duration, .isle-reminders-count, .isle-cal-event-time, .isle-cal-day, .isle-usage-percent {
   font-feature-settings: "tnum";
