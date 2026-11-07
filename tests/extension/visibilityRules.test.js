@@ -40,16 +40,16 @@ test('dodge hides when pointer is on island unless from top edge, and alerts sti
     assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: false, barHidden: false, hovered: true}), false);
     assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: false, barHidden: false, dodged: true}), false);
 
-    // Fullscreen / top bar hidden: dodges pointer
-    assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: true, hovered: false}), false);
-    assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: true, hovered: true, fromTopEdge: false}), 'now');
-    assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: true, dodged: true, fromTopEdge: false}), 'now');
-    assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: true, hovered: true, fromTopEdge: true}), false);
-    assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: true, dodged: true, fromTopEdge: true}), false);
-    assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: true, hovered: true, presentation: 'peek'}), false);
+    // Fullscreen / top bar hidden: island hides with top bar, appears from top edge or when bar appears
+    assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: true, barHidden: true, hovered: false}), 'now');
+    assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: true, barHidden: true, fromTopEdge: true}), false);
+    assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: true, barHidden: true, presentation: 'peek'}), false);
 
-    // Bar hidden: also dodges pointer
-    assert.equal(autoHide({...closed, mode: 'dodge', barHidden: true, hovered: true, fromTopEdge: false}), 'now');
+    // Fullscreen / top bar shown: dodges pointer on hover or stay dodged
+    assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: true, barHidden: false, hovered: false}), false);
+    assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: true, barHidden: false, hovered: true}), 'now');
+    assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: true, barHidden: false, dodged: true}), 'now');
+    assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: true, barHidden: false, hovered: true, presentation: 'peek'}), false);
 });
 
 test('over a full-screen app it hides at once, whatever the mode, and alerts still show', () => {

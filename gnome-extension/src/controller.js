@@ -385,7 +385,7 @@ export class Controller {
             [Main.overview, ['showing', 'hidden']],
             [global.window_manager, ['size-changed', 'minimize', 'unminimize', 'map', 'destroy']],
             [global.workspace_manager, ['active-workspace-changed']],
-            [Main.layoutManager.panelBox, ['notify::mapped', 'notify::y', 'notify::translation-y']],
+            [Main.layoutManager.panelBox, ['notify::mapped', 'notify::y', 'notify::translation-y', 'notify::visible']],
         ].flatMap(([source, signals]) => signals.map(signal => [source, source.connect(signal, sync)]));
         this._syncScanout();
         this._panelAdded = Main.layoutManager.uiGroup.connect('child-added', (_group, actor) => {
@@ -602,7 +602,10 @@ export class Controller {
         this._topBar.connect('style-changed', () => this._updateGeometry());
         this._topBar.connect('moved', () => this._updateGeometry());
         this._topBar.connect('calendar-requested', (_bar, page) => this._toggleFromKeyboard(page));
-        this._topBar.connect('panel-visibility-changed', () => this._syncDimmedState());
+        this._topBar.connect('panel-visibility-changed', () => {
+            this._syncAutoHide();
+            this._syncDimmedState();
+        });
         island.connect('key-press-event', (_actor, event) => {
             // A command waiting on the user: Enter runs it, Esc denies it.
             const key = event.get_key_symbol();
@@ -1139,7 +1142,7 @@ export class Controller {
             return GLib.SOURCE_REMOVE;
         }
         const monitor = this._monitor;
-        if (!this._isAppFullscreen(monitor)) {
+        if (!this._isAppFullscreen(monitor) || this._barHidden(monitor)) {
             this._dodged = false;
             this._revealedFromTop = false;
             this._stopDodgeWatch();

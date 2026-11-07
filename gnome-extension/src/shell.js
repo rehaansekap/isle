@@ -344,10 +344,6 @@ export class TopBar extends Signals.EventEmitter {
         const isIsland = elementStyle === 'island';
         const addStyle = isIsland ? 'isle-style-island' : 'isle-style-pill';
         const removeStyle = isIsland ? 'isle-style-pill' : 'isle-style-island';
-        const islandStyle = 'margin-top: 0px !important; margin-bottom: 0px !important; padding-top: 2px !important; padding-bottom: 3px !important; height: 29px !important; background-color: #000000 !important; border: 1px solid rgba(255, 255, 255, 0.12) !important; border-top: none !important; border-top-left-radius: 0px !important; border-top-right-radius: 0px !important; border-bottom-left-radius: 12px !important; border-bottom-right-radius: 12px !important; box-shadow: 0 3px 8px rgba(0, 0, 0, 0.45) !important;';
-        const pillStyle = 'margin-top: 3px !important; margin-bottom: 3px !important; border-radius: 999px !important; height: 26px !important; background-color: #000000 !important; border: 1px solid rgba(255, 255, 255, 0.1) !important; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4) !important;';
-        const customStyle = isIsland ? islandStyle : pillStyle;
-        const yAlign = isIsland ? Clutter.ActorAlign.START : Clutter.ActorAlign.CENTER;
 
         if (glassPills) {
             if (activities) {
@@ -355,8 +351,7 @@ export class TopBar extends Signals.EventEmitter {
                 activities.add_style_class_name('isle-pill');
                 activities.add_style_class_name(addStyle);
                 activities.remove_style_class_name(removeStyle);
-                activities.y_align = yAlign;
-                activities.style = customStyle;
+                activities.style = null;
             }
             if (quickSettings) {
                 quickSettings.add_style_class_name(SYSTEM_PILL_CLASS);
@@ -364,10 +359,9 @@ export class TopBar extends Signals.EventEmitter {
                 quickSettings.add_style_class_name(addStyle);
                 quickSettings.remove_style_class_name(removeStyle);
                 quickSettings.name = 'panelSystem';
-                quickSettings.y_align = yAlign;
-                quickSettings.style = customStyle;
+                quickSettings.style = null;
             }
-            this._setupTrayPill(addStyle, removeStyle, customStyle, yAlign);
+            this._setupTrayPill(addStyle, removeStyle);
         } else {
             if (activities) {
                 activities.remove_style_class_name(WORKSPACE_PILL_CLASS);
@@ -375,7 +369,6 @@ export class TopBar extends Signals.EventEmitter {
                 activities.remove_style_class_name('isle-style-pill');
                 activities.remove_style_class_name('isle-style-island');
                 activities.style = null;
-                activities.y_align = Clutter.ActorAlign.FILL;
             }
             if (quickSettings) {
                 quickSettings.remove_style_class_name(SYSTEM_PILL_CLASS);
@@ -383,7 +376,6 @@ export class TopBar extends Signals.EventEmitter {
                 quickSettings.remove_style_class_name('isle-style-pill');
                 quickSettings.remove_style_class_name('isle-style-island');
                 quickSettings.style = null;
-                quickSettings.y_align = Clutter.ActorAlign.FILL;
                 if (quickSettings.name === 'panelSystem')
                     quickSettings.name = null;
             }
@@ -391,7 +383,7 @@ export class TopBar extends Signals.EventEmitter {
         }
     }
 
-    _setupTrayPill(addStyle = 'isle-style-pill', removeStyle = 'isle-style-island', customStyle = null, yAlign = Clutter.ActorAlign.FILL) {
+    _setupTrayPill(addStyle = 'isle-style-pill', removeStyle = 'isle-style-island') {
         const rightBox = Main.panel._rightBox;
         if (!rightBox)
             return;
@@ -403,7 +395,7 @@ export class TopBar extends Signals.EventEmitter {
             this._trayPill = new St.BoxLayout({
                 name: 'isleTrayPill',
                 style_class: 'isle-pill isle-tray-pill',
-                y_align: yAlign,
+                y_align: Clutter.ActorAlign.FILL,
                 y_expand: true,
             });
             this._trayPill.connect('child-added', () => this._updateTrayPillVisibility());
@@ -413,10 +405,7 @@ export class TopBar extends Signals.EventEmitter {
             this._trayPill.add_style_class_name(addStyle);
             this._trayPill.remove_style_class_name(removeStyle);
         }
-        if (customStyle)
-            this._trayPill.style = customStyle;
-        if (yAlign !== undefined)
-            this._trayPill.y_align = yAlign;
+        this._trayPill.style = null;
 
         // Reparent existing tray indicators into this._trayPill
         const children = [...rightBox.get_children()];

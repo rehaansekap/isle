@@ -194,7 +194,25 @@
   height: 22px !important;
 }
 
-/* Island style: rounded notch attached to top edge, no empty space above, matching dynamic island shape */
+/* Pill style: fully rounded ends (capsule) */
+#panel.isle-elements-pill #panelActivities,
+#panel.isle-elements-pill .isle-workspace-pill,
+#panel.isle-elements-pill .isle-pill,
+#panel.isle-elements-pill .isle-tray-pill,
+#panel.isle-elements-pill .isle-system-pill,
+#panel.isle-elements-pill #panelSystem,
+#panel.isle-elements-pill #isleTrayPill,
+#panel.isle-glass-pills .isle-style-pill,
+#panel.isle-glass-pills #panelActivities.isle-style-pill,
+#panel.isle-glass-pills .isle-workspace-pill.isle-style-pill,
+#panel.isle-glass-pills .isle-tray-pill.isle-style-pill,
+#panel.isle-glass-pills .isle-system-pill.isle-style-pill,
+#panel.isle-glass-pills #panelSystem.isle-style-pill,
+#panel.isle-glass-pills #isleTrayPill.isle-style-pill {
+  border-radius: 999px !important;
+}
+
+/* Island style: rounded box matching dynamic island shape */
 #panel.isle-elements-island #panelActivities,
 #panel.isle-elements-island .isle-workspace-pill,
 #panel.isle-elements-island .isle-pill,
@@ -209,19 +227,7 @@
 #panel.isle-glass-pills .isle-system-pill.isle-style-island,
 #panel.isle-glass-pills #panelSystem.isle-style-island,
 #panel.isle-glass-pills #isleTrayPill.isle-style-island {
-  margin-top: 0 !important;
-  margin-bottom: 0 !important;
-  padding-top: 2px !important;
-  padding-bottom: 3px !important;
-  height: 29px !important;
-  background-color: #000000 !important;
-  border: 1px solid rgba(255, 255, 255, 0.12) !important;
-  border-top: none !important;
-  border-top-left-radius: 0 !important;
-  border-top-right-radius: 0 !important;
-  border-bottom-left-radius: 12px !important;
-  border-bottom-right-radius: 12px !important;
-  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.45) !important;
+  border-radius: 8px !important;
 }
 
 #panel.isle-elements-island.isle-compact-bar #panelActivities,
@@ -238,15 +244,7 @@
 #panel.isle-glass-pills.isle-compact-bar .isle-system-pill.isle-style-island,
 #panel.isle-glass-pills.isle-compact-bar #panelSystem.isle-style-island,
 #panel.isle-glass-pills.isle-compact-bar #isleTrayPill.isle-style-island {
-  margin-top: 0 !important;
-  margin-bottom: 0 !important;
-  padding-top: 1px !important;
-  padding-bottom: 2px !important;
-  height: 24px !important;
-  border-top-left-radius: 0 !important;
-  border-top-right-radius: 0 !important;
-  border-bottom-left-radius: 10px !important;
-  border-bottom-right-radius: 10px !important;
+  border-radius: 6px !important;
 }
 
 /* Crisp icons inside solid black pills */
