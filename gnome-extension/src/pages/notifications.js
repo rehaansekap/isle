@@ -139,14 +139,18 @@ export const NotificationsPage = GObject.registerClass(
             });
             this._scroll.set_child(this._list);
 
-            const vAdjust = this._scroll.vscroll.adjustment;
-            const updateScrollPolicy = () => {
-                const needsScroll = vAdjust.upper > vAdjust.page_size + 2;
-                const wanted = needsScroll ? St.PolicyType.AUTOMATIC : St.PolicyType.NEVER;
-                if (this._scroll.vscrollbar_policy !== wanted)
-                    this._scroll.vscrollbar_policy = wanted;
-            };
-            vAdjust.connect('changed', updateScrollPolicy);
+            const vAdjust = this._scroll.vadjustment;
+            if (vAdjust) {
+                const updateScrollPolicy = () => {
+                    const needsScroll = vAdjust.upper > vAdjust.page_size + 2;
+                    const wanted = needsScroll ? St.PolicyType.AUTOMATIC : St.PolicyType.NEVER;
+                    if (this._scroll.vscrollbar_policy !== wanted)
+                        this._scroll.vscrollbar_policy = wanted;
+                };
+                vAdjust.connect('changed', updateScrollPolicy);
+                vAdjust.connect('notify::upper', updateScrollPolicy);
+                vAdjust.connect('notify::page-size', updateScrollPolicy);
+            }
 
             this._empty = new St.BoxLayout({ ...VERTICAL, style_class: 'isle-empty', x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER, x_expand: true });
             this._empty.add_child(new St.Icon({ gicon: icon('isle-bell'), icon_size: 24, style_class: 'isle-empty-icon', x_align: Clutter.ActorAlign.CENTER }));
