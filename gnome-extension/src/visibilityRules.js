@@ -5,18 +5,21 @@
 
 /** When the closed island on screen hides ('now', 'later' after Settings' wait, or false) for `mode` (off, always,
  * top-bar, windows, or dodge); at once over a full-screen app, which it shows only for alerts. */
-export function autoHide({mode, presentation, visible, hovered, fullscreen, barHidden, windowAtTop, fromTopEdge}) {
+export function autoHide({mode, presentation, visible, hovered, fullscreen, barHidden, windowAtTop, fromTopEdge, dodged}) {
     if (!visible || presentation !== 'compact')
         return false;
-    if (fullscreen || (mode === 'top-bar' && barHidden))
-        return 'now';
     if (mode === 'dodge') {
+        const isFullscreen = fullscreen || barHidden;
+        if (!isFullscreen)
+            return false;
         if (fromTopEdge)
             return false;
-        if (hovered)
+        if (dodged || hovered)
             return 'now';
         return false;
     }
+    if (fullscreen || (mode === 'top-bar' && barHidden))
+        return 'now';
     if (hovered)
         return false;
     if (mode === 'always' || (mode === 'windows' && windowAtTop))

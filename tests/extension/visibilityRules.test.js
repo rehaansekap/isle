@@ -36,14 +36,24 @@ test('beside windows, it hides only while a window reaches the top', () => {
 });
 
 test('dodge hides when pointer is on island unless from top edge, and alerts still show', () => {
-    assert.equal(autoHide({...closed, mode: 'dodge', hovered: false}), false);
-    assert.equal(autoHide({...closed, mode: 'dodge', hovered: true, fromTopEdge: false}), 'now');
-    assert.equal(autoHide({...closed, mode: 'dodge', hovered: true, fromTopEdge: true}), false);
-    assert.equal(autoHide({...closed, mode: 'dodge', hovered: true, presentation: 'peek'}), false);
+    // Non-fullscreen: does not dodge
+    assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: false, barHidden: false, hovered: true}), false);
+    assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: false, barHidden: false, dodged: true}), false);
+
+    // Fullscreen / top bar hidden: dodges pointer
+    assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: true, hovered: false}), false);
+    assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: true, hovered: true, fromTopEdge: false}), 'now');
+    assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: true, dodged: true, fromTopEdge: false}), 'now');
+    assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: true, hovered: true, fromTopEdge: true}), false);
+    assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: true, dodged: true, fromTopEdge: true}), false);
+    assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: true, hovered: true, presentation: 'peek'}), false);
+
+    // Bar hidden: also dodges pointer
+    assert.equal(autoHide({...closed, mode: 'dodge', barHidden: true, hovered: true, fromTopEdge: false}), 'now');
 });
 
 test('over a full-screen app it hides at once, whatever the mode, and alerts still show', () => {
-    for (const mode of ['off', 'always', 'top-bar', 'windows', 'dodge']) {
+    for (const mode of ['off', 'always', 'top-bar', 'windows']) {
         assert.equal(autoHide({...closed, mode, fullscreen: true}), 'now');
         assert.equal(autoHide({...closed, mode, fullscreen: true, hovered: true}), 'now');
         assert.equal(autoHide({...closed, mode, fullscreen: true, presentation: 'peek'}), false);
@@ -55,5 +65,5 @@ test('the hidden island takes the pointer only where it can come back from', () 
     assert.equal(revealBand({mode: 'windows', fullscreen: false, barHeight: 0, edge: 2}), 2);
     assert.equal(revealBand({mode: 'always', fullscreen: true, barHeight: 32, edge: 2}), 0);
     assert.equal(revealBand({mode: 'top-bar', fullscreen: false, barHeight: 32, edge: 2}), 0);
-    assert.equal(revealBand({mode: 'dodge', fullscreen: false, barHeight: 32, edge: 4}), 4);
+    assert.equal(revealBand({mode: 'dodge', fullscreen: false, barHeight: 32, edge: 2}), 2);
 });

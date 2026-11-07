@@ -95,7 +95,7 @@ const HEADER_WITHOUT_BAR = 32;
 /** A window's animation (minimizing, say) is over by then, so whether it covers the display is checked again. */
 const SCANOUT_SETTLE_MS = 400;
 /** Auto-hidden on a display without the top bar, its top this many px (CSS) still brings it back. */
-const REVEAL_EDGE_PX = 4;
+const REVEAL_EDGE_PX = 2;
 /** isled may be away this long (restarting after an update) before the island does anything about it. */
 const SERVICE_GRACE_MS = 5000;
 /** Opened from the keyboard without getting it, the island closes this soon unless the pointer is on it. */
@@ -195,6 +195,9 @@ export class Controller {
         this._presentation = 'compact';
         /** Whether auto-hide has faded the closed island away (see `_syncAutoHide`). */
         this._autoHidden = false;
+        this._dodged = false;
+        this._revealedFromTop = false;
+        this._dodgeWatchId = 0;
         /** Whether `_warmUp` shows the open island's view out of sight. */
         this._warmShown = false;
         /** A warm-up the island opened in the middle of, and whether it was of all (see `_warmUp`); else null. */
@@ -982,17 +985,19 @@ export class Controller {
         const island = mirror?.island ?? this._island;
         const monitor = mirror?.monitor ?? this._monitor;
         const mode = this._settings.get_string('auto-hide');
-        const fullscreen = this._overFullscreenOn(monitor);
+        const isDodge = mode === 'dodge';
+        const fullscreen = isDodge ? this._isAppFullscreen(monitor) : this._overFullscreenOn(monitor);
         const [, pointerY] = global.get_pointer();
         const barHeight = this._isOnBar(monitor) && !this._barHidden(monitor) ? this._topBar.height : 0;
-        const fromTopEdge = mode === 'dodge' && (pointerY - (monitor?.y ?? 0) <= px(REVEAL_EDGE_PX));
+        const fromTopEdge = isDodge && (pointerY - (monitor?.y ?? 0) <= px(REVEAL_EDGE_PX));
         const when = autoHide({
             mode, fullscreen,
             // A copy shows the island's alert, or else the closed island.
             presentation: !mirror || this._presentation === 'peek' ? this._presentation : 'compact',
             visible: island.visible,
             hovered: island.hovered,
-            barHidden: mode === 'top-bar' && this._barHidden(monitor),
+            dodged: this._dodged,
+            barHidden: (mode === 'top-bar' || isDodge) && this._barHidden(monitor),
             windowAtTop: mode === 'windows' && this._windowAtTop(monitor, island),
             fromTopEdge,
         });
@@ -1080,7 +1085,100 @@ export class Controller {
         if (!this._isOnBar(monitor))
             return false;
         const panelBox = Main.layoutManager.panelBox;
-        return !panelBox.mapped || panelBox.get_transformed_position()[1] + panelBox.height <= monitor.y + 1;
+        return !panelBox.mapped || !panelBox.visible || panelBox.get_transformed_position()[1] + panelBox.height <= monitor.y + 1;
+    }
+
+    /** Whether an app is in fullscreen on `monitor` or the top bar is hidden (e.g. by Hide Top Bar). */
+    _isAppFullscreen(monitor = this._monitor) {
+        if (!monitor)
+            return false;
+        if (monitor.inFullscreen)
+            return true;
+        if (this._barHidden(monitor))
+            return true;
+        try {
+            const workspace = global.workspace_manager?.get_active_workspace();
+            if (workspace) {
+                const windows = global.display?.get_tab_list(Meta.TabList.NORMAL, workspace);
+                const win = windows?.find(w => w.get_monitor() === monitor.index && !w.minimized && w.is_on_primary_monitor());
+                if (win && win.is_fullscreen())
+                    return true;
+            }
+        } catch {
+            // ignore
+        }
+        return false;
+    }
+
+    _startDodgeWatch() {
+        if (this._dodgeWatchId)
+            return;
+        this._dodgeWatchId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 40, () => {
+            return this._checkDodgePointer();
+        });
+    }
+
+    _stopDodgeWatch() {
+        if (this._dodgeWatchId) {
+            GLib.source_remove(this._dodgeWatchId);
+            this._dodgeWatchId = 0;
+        }
+    }
+
+    _checkDodgePointer() {
+        if (this._destroying) {
+            this._stopDodgeWatch();
+            return GLib.SOURCE_REMOVE;
+        }
+        const mode = this._settings.get_string('auto-hide');
+        if (mode !== 'dodge' || this._presentation !== 'compact') {
+            this._dodged = false;
+            this._revealedFromTop = false;
+            this._stopDodgeWatch();
+            this._syncAutoHide();
+            return GLib.SOURCE_REMOVE;
+        }
+        const monitor = this._monitor;
+        if (!this._isAppFullscreen(monitor)) {
+            this._dodged = false;
+            this._revealedFromTop = false;
+            this._stopDodgeWatch();
+            this._syncAutoHide();
+            return GLib.SOURCE_REMOVE;
+        }
+
+        const [pxX, pxY] = global.get_pointer();
+        const island = this._island;
+        const monitorY = monitor ? monitor.y : 0;
+        const edge = px(REVEAL_EDGE_PX);
+
+        // User intentionally pushed to very top edge directly above island -> reveal
+        if (pxY <= monitorY + edge && pxX >= island.x - 30 && pxX <= island.x + island.width + 30) {
+            this._revealedFromTop = true;
+            this._dodged = false;
+            this._stopDodgeWatch();
+            this._syncAutoHide();
+            return GLib.SOURCE_REMOVE;
+        }
+
+        // Pointer leaving dodge zone (with hysteresis)
+        const leaveY = monitorY + island.height + 25;
+        const leaveLeft = island.x - 45;
+        const leaveRight = island.x + island.width + 45;
+
+        if (pxY > leaveY || pxX < leaveLeft || pxX > leaveRight) {
+            this._dodged = false;
+            this._revealedFromTop = false;
+            this._stopDodgeWatch();
+            this._syncAutoHide();
+            return GLib.SOURCE_REMOVE;
+        }
+
+        if (!this._dodged && !this._revealedFromTop) {
+            this._dodged = true;
+            this._syncAutoHide();
+        }
+        return GLib.SOURCE_CONTINUE;
     }
 
     /** Whether an app's window under the island (or `island`, a copy on `monitor`) reaches the top of its display:
@@ -1392,8 +1490,12 @@ export class Controller {
         this._presentation = presentation;
         // Alerts, the open island and the assistant are never auto-hidden; the resting island waits again.
         this._syncAutoHide();
-        if (presentation !== 'compact')
+        if (presentation !== 'compact') {
+            this._stopDodgeWatch();
+            this._dodged = false;
+            this._revealedFromTop = false;
             this._putAwayWarm();
+        }
         else if (this._warmHeld !== null && !this._timeouts.has('warm'))
             this._later('warm', WARM_AFTER_CLOSE_MS, () => this._warmUp(this._warmHeld));
         // A display without the top bar: the island hangs from its top edge. Sizes are in stage pixels; the
@@ -1723,13 +1825,32 @@ export class Controller {
 
     /** The pointer came or went: holds or times out alerts and answers, and opens or closes the island. */
     _onHoverChanged(moved = false) {
+        const isDodge = this._settings.get_string('auto-hide') === 'dodge';
+        const monitor = this._monitor;
+        if (isDodge && this._isAppFullscreen(monitor) && this._presentation === 'compact') {
+            const [, pointerY] = global.get_pointer();
+            const monitorY = monitor ? monitor.y : 0;
+            if (pointerY <= monitorY + px(REVEAL_EDGE_PX)) {
+                this._revealedFromTop = true;
+                this._dodged = false;
+                this._stopDodgeWatch();
+            } else if (!this._revealedFromTop) {
+                this._dodged = true;
+                this._startDodgeWatch();
+            }
+        }
         // With copies, the island stays on the display the pointer is on it in, until the pointer leaves.
         if (this._island.hovered && this._mirrors.length) {
             this._pointedMonitor = this._monitor;
             this._pointedByTap = false;
         }
-        else if (!this._island.hovered)
+        else if (!this._island.hovered) {
             this._leavePointed();
+            const [, pointerY] = global.get_pointer();
+            const monitorY = monitor ? monitor.y : 0;
+            if (pointerY > monitorY + this._island.height + 25)
+                this._revealedFromTop = false;
+        }
         // Under the pointer, a hidden island comes back; away, its time to hide starts.
         const wasHidden = this._autoHidden;
         this._syncAutoHide();
@@ -1780,7 +1901,7 @@ export class Controller {
         }
         if (this._island.hovered) {
             this._cancel('collapse');
-            const dodging = this._autoHidden || this._autoHideState().when === 'now';
+            const dodging = this._dodged || (isDodge && this._isAppFullscreen(monitor) && !this._revealedFromTop);
             if (!dodging && !this._expandWanted && this._settings.get_string('open-on') === 'hover' && !this._alertHoldsHover)
                 this._expandOnRest();
         } else {
@@ -3246,6 +3367,7 @@ export class Controller {
             return;
         }
         this._stopRevealWait();
+        this._stopDodgeWatch();
         // Turned off (the screen locks too): agents waiting on an answer here ask in their terminals at once,
         // and so do those that ask until Isle is back.
         this._passAgentAsks();
