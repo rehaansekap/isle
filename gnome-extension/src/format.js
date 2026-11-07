@@ -29,6 +29,11 @@ export function uses12Hour() {
     return interfaceSettings.get_string('clock-format') === '12h';
 }
 
+/** "14:05", or "2:05" with a 12-hour clock. */
+export function clockTime(dateTime = GLib.DateTime.new_now_local()) {
+    return dateTime.format(uses12Hour() ? '%l:%M' : '%H:%M').trim();
+}
+
 /** The clock's two parts: {time: "14:05"} or, with a 12-hour clock, {time: "2:05", meridiem: "PM"} (none where the
  * language has no such word). Two labels show them, the second smaller and dimmer (see stylesheet.css). */
 export function clockParts(dateTime = GLib.DateTime.new_now_local(), twelveHour = uses12Hour()) {

@@ -29,5 +29,7 @@ export function autoHide({mode, presentation, visible, hovered, fullscreen, barH
 export function revealBand({mode, fullscreen, barHeight, edge}) {
     if (fullscreen || mode === 'top-bar')
         return 0;
+    if (mode === 'dodge')
+        return edge;
     return Math.max(barHeight, edge);
 }

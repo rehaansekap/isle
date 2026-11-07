@@ -55,4 +55,5 @@ test('the hidden island takes the pointer only where it can come back from', () 
     assert.equal(revealBand({mode: 'windows', fullscreen: false, barHeight: 0, edge: 2}), 2);
     assert.equal(revealBand({mode: 'always', fullscreen: true, barHeight: 32, edge: 2}), 0);
     assert.equal(revealBand({mode: 'top-bar', fullscreen: false, barHeight: 32, edge: 2}), 0);
+    assert.equal(revealBand({mode: 'dodge', fullscreen: false, barHeight: 32, edge: 4}), 4);
 });

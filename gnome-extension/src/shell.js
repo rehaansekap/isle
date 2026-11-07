@@ -38,6 +38,8 @@ const COMPACT_BAR_CLASS = 'isle-compact-bar';
 const NOTCH_BAR_CLASS = 'isle-notch-bar';
 /** Style class making the top bar taller round a pill inside it, as tall as a notched display's (see stylesheet.css). */
 const PILL_BAR_CLASS = 'isle-pill-bar';
+const ELEMENTS_ISLAND_BAR_CLASS = 'isle-elements-island';
+const ELEMENTS_PILL_BAR_CLASS = 'isle-elements-pill';
 /** The space left below the island inside the bar (Settings): the island is this much shorter, the bar
  * keeps its height, so its other buttons stay centred (#14). */
 const GAP_PX = 4;
@@ -320,6 +322,7 @@ export class TopBar extends Signals.EventEmitter {
         const glass = this._settings.get_string('top-bar-style') === 'glass';
         const elementStyle = this._settings.get_string('top-bar-element-style');
         const glassPills = glass && elementStyle !== 'transparent' && this._settings.get_boolean('glass-pills');
+        const isIsland = elementStyle === 'island';
         // The bar's height changes with these; `height-changed` re-lays out the island.
         setStyleClasses(Main.panel, {
             [BAR_CLASS]: styled,
@@ -328,6 +331,8 @@ export class TopBar extends Signals.EventEmitter {
             [PILL_BAR_CLASS]: styled && inBar && this._settings.get_string('island-shape') === 'pill',
             [GLASS_BAR_CLASS]: styled && this.opacity < SHADOW_BELOW,
             [GLASS_PILLS_BAR_CLASS]: styled && glassPills,
+            [ELEMENTS_ISLAND_BAR_CLASS]: styled && glassPills && isIsland,
+            [ELEMENTS_PILL_BAR_CLASS]: styled && glassPills && !isIsland,
         });
         this._syncPills(glassPills, elementStyle);
     }
@@ -339,6 +344,7 @@ export class TopBar extends Signals.EventEmitter {
         const isIsland = elementStyle === 'island';
         const addStyle = isIsland ? 'isle-style-island' : 'isle-style-pill';
         const removeStyle = isIsland ? 'isle-style-pill' : 'isle-style-island';
+        const radiusStyle = isIsland ? 'border-radius: 10px !important;' : 'border-radius: 999px !important;';
 
         if (glassPills) {
             if (activities) {
@@ -346,6 +352,7 @@ export class TopBar extends Signals.EventEmitter {
                 activities.add_style_class_name('isle-pill');
                 activities.add_style_class_name(addStyle);
                 activities.remove_style_class_name(removeStyle);
+                activities.style = radiusStyle;
             }
             if (quickSettings) {
                 quickSettings.add_style_class_name(SYSTEM_PILL_CLASS);
@@ -353,20 +360,23 @@ export class TopBar extends Signals.EventEmitter {
                 quickSettings.add_style_class_name(addStyle);
                 quickSettings.remove_style_class_name(removeStyle);
                 quickSettings.name = 'panelSystem';
+                quickSettings.style = radiusStyle;
             }
-            this._setupTrayPill(addStyle, removeStyle);
+            this._setupTrayPill(addStyle, removeStyle, radiusStyle);
         } else {
             if (activities) {
                 activities.remove_style_class_name(WORKSPACE_PILL_CLASS);
                 activities.remove_style_class_name('isle-pill');
                 activities.remove_style_class_name('isle-style-pill');
                 activities.remove_style_class_name('isle-style-island');
+                activities.style = null;
             }
             if (quickSettings) {
                 quickSettings.remove_style_class_name(SYSTEM_PILL_CLASS);
                 quickSettings.remove_style_class_name('isle-pill');
                 quickSettings.remove_style_class_name('isle-style-pill');
                 quickSettings.remove_style_class_name('isle-style-island');
+                quickSettings.style = null;
                 if (quickSettings.name === 'panelSystem')
                     quickSettings.name = null;
             }
@@ -374,7 +384,7 @@ export class TopBar extends Signals.EventEmitter {
         }
     }
 
-    _setupTrayPill(addStyle = 'isle-style-pill', removeStyle = 'isle-style-island') {
+    _setupTrayPill(addStyle = 'isle-style-pill', removeStyle = 'isle-style-island', radiusStyle = null) {
         const rightBox = Main.panel._rightBox;
         if (!rightBox)
             return;
@@ -396,6 +406,8 @@ export class TopBar extends Signals.EventEmitter {
             this._trayPill.add_style_class_name(addStyle);
             this._trayPill.remove_style_class_name(removeStyle);
         }
+        if (radiusStyle)
+            this._trayPill.style = radiusStyle;
 
         // Reparent existing tray indicators into this._trayPill
         const children = [...rightBox.get_children()];
@@ -547,6 +559,7 @@ export class TopBar extends Signals.EventEmitter {
         setStyleClasses(Main.panel, {
             [BAR_CLASS]: false, [COMPACT_BAR_CLASS]: false, [NOTCH_BAR_CLASS]: false, [PILL_BAR_CLASS]: false,
             [GLASS_BAR_CLASS]: false, [GLASS_PILLS_BAR_CLASS]: false,
+            [ELEMENTS_ISLAND_BAR_CLASS]: false, [ELEMENTS_PILL_BAR_CLASS]: false,
         });
         this._dateMenu.set_width(-1);
         this._dateMenu.opacity = 255;

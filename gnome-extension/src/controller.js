@@ -95,7 +95,7 @@ const HEADER_WITHOUT_BAR = 32;
 /** A window's animation (minimizing, say) is over by then, so whether it covers the display is checked again. */
 const SCANOUT_SETTLE_MS = 400;
 /** Auto-hidden on a display without the top bar, its top this many px (CSS) still brings it back. */
-const REVEAL_EDGE_PX = 2;
+const REVEAL_EDGE_PX = 4;
 /** isled may be away this long (restarting after an update) before the island does anything about it. */
 const SERVICE_GRACE_MS = 5000;
 /** Opened from the keyboard without getting it, the island closes this soon unless the pointer is on it. */
@@ -985,7 +985,7 @@ export class Controller {
         const fullscreen = this._overFullscreenOn(monitor);
         const [, pointerY] = global.get_pointer();
         const barHeight = this._isOnBar(monitor) && !this._barHidden(monitor) ? this._topBar.height : 0;
-        const fromTopEdge = mode === 'dodge' && (pointerY - (monitor?.y ?? 0) <= Math.max(barHeight, px(REVEAL_EDGE_PX)));
+        const fromTopEdge = mode === 'dodge' && (pointerY - (monitor?.y ?? 0) <= px(REVEAL_EDGE_PX));
         const when = autoHide({
             mode, fullscreen,
             // A copy shows the island's alert, or else the closed island.
@@ -1780,7 +1780,8 @@ export class Controller {
         }
         if (this._island.hovered) {
             this._cancel('collapse');
-            if (!this._expandWanted && this._settings.get_string('open-on') === 'hover' && !this._alertHoldsHover)
+            const dodging = this._autoHidden || this._autoHideState().when === 'now';
+            if (!dodging && !this._expandWanted && this._settings.get_string('open-on') === 'hover' && !this._alertHoldsHover)
                 this._expandOnRest();
         } else {
             this._cancel('expand');

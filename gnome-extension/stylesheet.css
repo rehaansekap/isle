@@ -170,7 +170,8 @@
 #panel.isle-glass-pills .isle-pill,
 #panel.isle-glass-pills .isle-tray-pill,
 #panel.isle-glass-pills .isle-system-pill,
-#panel.isle-glass-pills #panelSystem {
+#panel.isle-glass-pills #panelSystem,
+#panel.isle-glass-pills #isleTrayPill {
   background-color: #000000 !important;
   border: 1px solid rgba(255, 255, 255, 0.1) !important;
   border-radius: 999px !important;
@@ -186,13 +187,21 @@
 #panel.isle-glass-pills.isle-compact-bar .isle-pill,
 #panel.isle-glass-pills.isle-compact-bar .isle-tray-pill,
 #panel.isle-glass-pills.isle-compact-bar .isle-system-pill,
-#panel.isle-glass-pills.isle-compact-bar #panelSystem {
+#panel.isle-glass-pills.isle-compact-bar #panelSystem,
+#panel.isle-glass-pills.isle-compact-bar #isleTrayPill {
   margin-top: 2px !important;
   margin-bottom: 2px !important;
   height: 22px !important;
 }
 
 /* Island style: rounded box matching dynamic island shape */
+#panel.isle-elements-island #panelActivities,
+#panel.isle-elements-island .isle-workspace-pill,
+#panel.isle-elements-island .isle-pill,
+#panel.isle-elements-island .isle-tray-pill,
+#panel.isle-elements-island .isle-system-pill,
+#panel.isle-elements-island #panelSystem,
+#panel.isle-elements-island #isleTrayPill,
 #panel.isle-glass-pills .isle-style-island,
 #panel.isle-glass-pills #panelActivities.isle-style-island,
 #panel.isle-glass-pills .isle-workspace-pill.isle-style-island,
@@ -203,6 +212,13 @@
   border-radius: 10px !important;
 }
 
+#panel.isle-elements-island.isle-compact-bar #panelActivities,
+#panel.isle-elements-island.isle-compact-bar .isle-workspace-pill,
+#panel.isle-elements-island.isle-compact-bar .isle-pill,
+#panel.isle-elements-island.isle-compact-bar .isle-tray-pill,
+#panel.isle-elements-island.isle-compact-bar .isle-system-pill,
+#panel.isle-elements-island.isle-compact-bar #panelSystem,
+#panel.isle-elements-island.isle-compact-bar #isleTrayPill,
 #panel.isle-glass-pills.isle-compact-bar .isle-style-island,
 #panel.isle-glass-pills.isle-compact-bar #panelActivities.isle-style-island,
 #panel.isle-glass-pills.isle-compact-bar .isle-workspace-pill.isle-style-island,
@@ -311,26 +327,18 @@
 
 /* ── Compact ──────────────────────────────────────────── */
 
-/* Each side's padding toward the clock is its gap to it; compact.js makes both sides as wide, and sets
- * the room at the ends from the island's height. */
-.isle-compact-start { padding-right: 30px; }
-.isle-compact-end { padding-left: 30px; }
+.isle-compact-row { padding: 0 16px; spacing: 10px; }
+
+/* Both slots keep their width when empty so the clock stays centred. */
+.isle-compact-slot { width: 24px; }
 
 .isle-compact-clock { font-size: 17px; font-weight: 600; letter-spacing: -0.2px; }
 .isle-compact-clock-box { spacing: 6px; }
-/* AM or PM after the time with a 12-hour clock: 80% of its size, a little dimmer, a space's width from it. */
-.isle-compact-clock-row { spacing: 4px; }
-.isle-compact-meridiem { font-size: 13.6px; font-weight: 600; color: rgba(255, 255, 255, 0.72); }
-/* The day before the time (Settings): as large, quieter, a little further from it than AM or PM. */
-.isle-compact-date { font-size: 17px; font-weight: 500; letter-spacing: -0.2px; margin-right: 2px; color: rgba(255, 255, 255, 0.7); }
 
 /* Inside the top bar everything is sized like the bar's own text. */
-.isle-compact-in-bar .isle-compact-start { padding-right: 28px; }
-.isle-compact-in-bar .isle-compact-end { padding-left: 28px; }
+.isle-compact-in-bar .isle-compact-row { padding: 0 14px; spacing: 10px; }
+.isle-compact-in-bar .isle-compact-slot { width: 22px; }
 .isle-compact-in-bar .isle-compact-clock { font-size: 15px; letter-spacing: -0.1px; }
-.isle-compact-in-bar .isle-compact-clock-row { spacing: 3px; }
-.isle-compact-in-bar .isle-compact-meridiem { font-size: 12px; }
-.isle-compact-in-bar .isle-compact-date { font-size: 15px; letter-spacing: -0.1px; }
 
 .isle-unseen-dot {
   width: 6px;
@@ -342,6 +350,7 @@
 /* Live activities: privacy dots and screen recording */
 
 .isle-privacy-dots { spacing: 4px; padding-left: 4px; }
+.isle-privacy-dots-in-slot { padding-left: 0; }
 /* On the closed island, a tight cluster after the right side's sign. */
 .isle-compact-trail .isle-privacy-dots { padding-left: 0; }
 
