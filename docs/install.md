@@ -37,6 +37,8 @@ Paste this into a terminal and press Enter:
 curl -fsSL https://raw.githubusercontent.com/zickrian/isle/main/get.sh | bash
 ```
 
+(`curl: command not found`? Install it first: `sudo apt install curl`.)
+
 It downloads the latest release, checks its checksum and installs it for
 your user. It ends with `==> Isle 1.x.y is installed` and what to do next:
 log out and back in, and how to check or remove Isle. Run it as yourself,
@@ -58,7 +60,7 @@ Rest the pointer on it to open it.
 Everything else works without it. To ask the island things out loud with
 Super+I:
 
-1. Install and sign in to one of Claude Code, Codex or Antigravity (the
+1. Install and sign in to one of Claude Code, Codex, Grok, opencode or Antigravity (the
    [README](../README.md#voice-assistant) says how; each uses your own plan).
 2. Set up speech recognition once, in a terminal. It downloads the speech
    model picked in Settings → Assistant (`small`, 265 MB, by default; or name
@@ -98,22 +100,30 @@ installers, and takes what your login shell sets for them
 
 ## Updating
 
-Run the same command again; it installs the newest release over the old one
-and keeps your tasks, calendar events, clipboard history and settings (the
-top bar look you picked included). Log out and back in afterwards.
+Isle tells you in the island when a new version is out.
+
+1. Click **Update** in that alert, or open Isle's Settings → **About**.
+2. Click **Update**. It takes a few seconds; no password is needed, and you
+   can close Settings meanwhile.
+3. Click **Log Out** and log back in.
+
+Your tasks, calendar events, clipboard history and settings stay.
+
+**Isle 1.3 or older**, or the button didn't work? Paste this in a terminal,
+press Enter, then log out and back in:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/zickrian/isle/main/get.sh | bash
 ```
 
-To install a particular version instead, put `ISLE_VERSION` before `bash`:
-`… | ISLE_VERSION=1.0.5 bash`.
+**Installed from a package?** Update it the way you installed it: download
+the new `.deb` or `.rpm` from [Releases](https://github.com/zickrian/isle/releases/latest)
+and open it, or on Arch run `git pull` and `makepkg -si` again in
+`packaging/aur`. Then log out and back in. Don't also run the command above: it would add a second copy (see
+[below](#both-a-package-and-the-one-line-install)).
 
-Installed from a package instead? Download the new release's `.deb` or
-`.rpm` and install it the same way as the first one, or run `makepkg -si`
-again with the updated `PKGBUILD` on Arch; then log out and back in. Don't
-run the command above as well: it would add a second copy in your home
-folder (see [below](#both-a-package-and-the-one-line-install)).
+To install a particular version, put `ISLE_VERSION` before `bash`:
+`… | ISLE_VERSION=1.0.5 bash`.
 
 ## Uninstalling
 
@@ -125,8 +135,9 @@ This removes the extension, its programs, its service and its font, the
 voice assistant's speech recognition and its models, Isle's caches, and a
 battery charge limit Isle set (asking for your password), and takes Isle's
 hooks out of Claude Code's and Codex's settings. Your tasks,
-calendar events, clipboard history and timer settings stay in
-`~/.local/share/isle`; delete it too to remove everything.
+calendar events, clipboard history, timer settings and app usage (if you
+turned the Apps page on) stay in `~/.local/share/isle`; delete it too to
+remove everything.
 
 Remove Isle this way, not with the Extensions app's Remove button: that
 deletes only the extension, and leaves `isled`, its service and its hooks.
@@ -256,6 +267,10 @@ If it says `OUT OF DATE`, your GNOME Shell version is outside 46 to 51. If
 it says `ERROR`, that is most likely a bug in Isle: please
 [open an issue](https://github.com/zickrian/isle/issues) with GNOME Shell's
 log (see **Anything else** below).
+
+**A phone can't open the Shelf.** It must be on the same Wi-Fi as the
+computer. A firewall that blocks incoming connections keeps it out too: see
+the [README](../README.md#troubleshooting) for the ufw and firewalld commands.
 
 **Music does not show.** Check the background service:
 `systemctl --user status isled`.

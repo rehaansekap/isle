@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 // The voice assistant's view: a little character with lively eyes that listens, thinks and answers,
 // beside what was heard and the answer. isled listens and asks the AI; the actions it answers with run here.
@@ -14,10 +15,11 @@ import St from 'gi://St';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
-import {TILES, describeActions, failed, namesProject, outcomeOf, runnable, slotsFor, stoppable} from './actionRules.js';
+import {TILES, describeActions, failed, namesProject, outcomeOf, runnable, slotsFor, stoppable, terminalLine} from './actionRules.js';
 import {Bot} from './bot.js';
 import {ChatView, CommandCard, answerMarkup, elapsed} from './chat.js';
 import {isTerminal} from './clipboard.js';
+import {answerPlain} from './format.js';
 import {VERTICAL, eventActor, maximize, onUiScale, px, uiScale, unmaximize} from './compat.js';
 import {plainBody} from './notifications.js';
 import {cornerClose, icon, iconButton, pillButton, revealClose, wrapLines} from './widgets.js';
@@ -41,6 +43,10 @@ const MIN_HEIGHT = FACE_SIZE + ROW_PADDING;
 const MAX_HEIGHT = 230;
 /** The conversation, open above the pill, grows the island to at most this (px below the top bar). */
 const CHAT_MAX_HEIGHT = 420;
+/** What an open conversation keeps beside a tall command card: its header and a message. */
+const CHAT_MIN_HEIGHT = 100;
+/** The tallest the row grows for a command card, so its buttons show below a long command. */
+const CARD_TALLEST = 600;
 /** The pill grows to this with a command card in it. */
 const CARD_MAX_HEIGHT = 320;
 /** What comes into the pill fades in as its shape grows to it, rather than show cut off by the edge (ms). */
@@ -67,8 +73,9 @@ const SELECTION_TIMEOUT_MS = 500;
 const MAX_NOTIFICATIONS = 10;
 const MAX_NOTIFICATION_BODY = 300;
 
-// Who GNOME Shell runs as, to check a command started as root writes its log as them (see `runnable`).
+// Read from /proc once.
 let user = null;
+/** Who GNOME Shell runs as, to check a command started as root writes its log as them (see `runnable`). */
 function shellUser() {
     if (!user) {
         const status = new TextDecoder().decode(GLib.file_get_contents('/proc/self/status')[1]);
@@ -95,6 +102,8 @@ const MIC_FADE = 2;
 const LEVEL_RATE = 8;
 /** The glow's level when animations are off in GNOME: there, but still. */
 const STILL_LEVEL = 0.2;
+/** How much brighter the light is a moment as an answer arrives (see `_boost`). */
+const REPLY_BOOST = 0.7;
 /** Without the pointer moving for this long (s), the eyes wander on their own. */
 const POINTER_REST_S = 2.5;
 /** Errors that come from not hearing you (isled's wording): it looks confused at them, sad at others. */
@@ -102,7 +111,6 @@ const NOT_HEARD = /^(Didn[’']t catch that|The microphone is muted|No microphon
 /** How much each key typed lights the edge, as a syllable does. */
 const KEY_LEVEL = 0.32;
 
-// The character (see bot.js), on screen: it looks at the pointer, or reads along as you type.
 /** Fades `actor` in from nothing, where it already is. */
 function fadeIn(actor) {
     actor.remove_transition('opacity');
@@ -110,8 +118,10 @@ function fadeIn(actor) {
     actor.ease({opacity: 255, duration: FADE_IN_MS, delay: FADE_IN_DELAY_MS, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
 }
 
+/** The character (see bot.js), on screen: it looks at the pointer, or reads along as you type. */
 const Face = GObject.registerClass(
 class Face extends St.DrawingArea {
+    /** Sized to the UI scale; the bot paints itself on each repaint. */
     _init(look) {
         super._init();
         onUiScale(this, scale => this.set_size(FACE_SIZE * scale, FACE_SIZE * scale));
@@ -129,6 +139,7 @@ class Face extends St.DrawingArea {
         });
     }
 
+    /** The character's animation clock (s). */
     get time() {
         return this.bot.time;
     }
@@ -146,6 +157,7 @@ class Face extends St.DrawingArea {
         this.queue_repaint();
     }
 
+    /** What the character is doing: listening, thinking, typing… (see bot.js). */
     setForm(form) {
         this.bot.setForm(form);
     }
@@ -178,6 +190,7 @@ class Face extends St.DrawingArea {
     }
 });
 
+/** The assistant's pill: the face, what was heard and answered, the field to type in, the conversation above. */
 export const VoiceView = GObject.registerClass({
     Signals: {
         // Taps on the face: speak again, or finish speaking.
@@ -195,7 +208,7 @@ export const VoiceView = GObject.registerClass({
         // A typed request, sent with Enter.
         'typed': {param_types: [GObject.TYPE_STRING]},
         // Each frame: the animation's time (s) and level, to move the island's edge glow with.
-        'frame': {param_types: [GObject.TYPE_DOUBLE, GObject.TYPE_DOUBLE]},
+        'frame': {param_types: [GObject.TYPE_DOUBLE, GObject.TYPE_DOUBLE, GObject.TYPE_DOUBLE]},
         // The + in the conversation, and Undo after it.
         'new-chat': {},
         'undo-new-chat': {},
@@ -208,6 +221,7 @@ export const VoiceView = GObject.registerClass({
         'close-requested': {},
     },
 }, class VoiceView extends St.Widget {
+    /** Builds the row (face, texts, action button) and the conversation that opens above it. */
     _init(look) {
         // Reactive, so a scroll over it can open the conversation (see `vfunc_scroll_event`).
         super._init({style_class: 'isle-voice', layout_manager: new Clutter.BinLayout(), reactive: true});
@@ -388,6 +402,9 @@ export const VoiceView = GObject.registerClass({
         this.stopTyping();
         if (['listening', 'transcribing'].includes(state.phase))
             this._dropEndedCard(state.card);
+        // Answered after working: the light brightens a moment, then settles.
+        if (state.phase === 'reply' && WORKING.includes(this._phase))
+            this._boost = Math.max(this._boost ?? 0, REPLY_BOOST);
         this._phase = state.phase;
         this._syncClose();
         this._exchange = {heard: state.heard ?? '', reply: clip(state.reply ?? '')};
@@ -543,6 +560,7 @@ export const VoiceView = GObject.registerClass({
             this.emit('size-changed');
     }
 
+    /** The chevron by what was heard, when the conversation holds more than the pill shows. */
     _syncEarlier() {
         // The chevron, for a conversation longer than what the pill shows, or an answer cut short.
         const earlier = (this._history.length > 2 || (this._replyCut && this._history.length > 0)) && !this.chatOpen;
@@ -550,6 +568,7 @@ export const VoiceView = GObject.registerClass({
         this._heardButton.reactive = earlier;
     }
 
+    /** Whether the conversation is open above the pill. */
     get chatOpen() {
         return this._chat.visible;
     }
@@ -573,6 +592,7 @@ export const VoiceView = GObject.registerClass({
         this.emit('size-changed');
     }
 
+    /** Puts the conversation away; what was heard shows in the pill again. */
     closeChat() {
         if (!this.chatOpen)
             return;
@@ -614,6 +634,7 @@ export const VoiceView = GObject.registerClass({
         return Clutter.EVENT_PROPAGATE;
     }
 
+    /** Sends what was typed, unless it is blank. */
     _send() {
         const text = this._entry.text.trim();
         if (text)
@@ -637,6 +658,7 @@ export const VoiceView = GObject.registerClass({
         this._sendButton.ease({scale_x: 1, scale_y: 1, duration: 200, mode: Clutter.AnimationMode.EASE_OUT_BACK});
     }
 
+    /** The steps done, a tick each; one just done fades in. */
     _showSteps(done) {
         const before = this._stepsBox.visible ? this._stepsBox.get_n_children() : 0;
         this._stepsBox.destroy_all_children();
@@ -644,7 +666,8 @@ export const VoiceView = GObject.registerClass({
             const row = new St.BoxLayout({style_class: 'isle-voice-step'});
             row.add_child(new St.Icon({gicon: icon('isle-check-symbolic'), icon_size: 11, style_class: 'isle-voice-step-tick',
                 y_align: Clutter.ActorAlign.CENTER}));
-            const line = new St.Label({text: step, style_class: 'isle-voice-step-text', y_align: Clutter.ActorAlign.CENTER});
+            // As read, not as written: an AI's step may come with Markdown ("**done**").
+            const line = new St.Label({text: answerPlain(step).replace(/\s+/g, ' '), style_class: 'isle-voice-step-text', y_align: Clutter.ActorAlign.CENTER});
             line.clutter_text.ellipsize = Pango.EllipsizeMode.END;
             row.add_child(line);
             this._stepsBox.add_child(row);
@@ -686,6 +709,7 @@ export const VoiceView = GObject.registerClass({
         this.emit('size-changed');
     }
 
+    /** The dim line while it listens. */
     _listeningText() {
         return this._micWaiting ? 'Getting ready…' : this.greeting ?? 'Listening…';
     }
@@ -725,6 +749,7 @@ export const VoiceView = GObject.registerClass({
         this._syncIdeas();
     }
 
+    /** Hides the field; the answer line comes back. */
     stopTyping() {
         this._entry.hide();
         this._text.show();
@@ -777,6 +802,7 @@ export const VoiceView = GObject.registerClass({
         this._micTarget = level;
     }
 
+    /** isled's phase as last shown, or 'typing'. */
     get phase() {
         return this._phase;
     }
@@ -796,6 +822,7 @@ export const VoiceView = GObject.registerClass({
         return this._phase === 'reply' ? this._exchange : null;
     }
 
+    /** In stage pixels: narrow while it only listens. */
     get preferredWidth() {
         // With something to show above, it stays wide, so a conversation never jumps.
         const short = ['listening', 'transcribing'].includes(this._phase) && !this.followUp && !this.typing &&
@@ -812,10 +839,18 @@ export const VoiceView = GObject.registerClass({
         // Measured per label: the box's own answer is the size set below.
         const parts = [this._undo, this._heardButton, this._entry, this._ideas, this._text, this._card, this._stepsBox, this._still,
             this._hint, this._signIn, this._setUp];
-        const natural = parts.filter(part => part.visible).reduce((sum, part) => sum + part.get_preferred_height(width)[1], 0);
+        // Every step counted first: those a card hid last time may fit now (see `_fitCard`).
+        this._stepsBox.get_children().forEach(step => step.show());
+        let natural = parts.filter(part => part.visible).reduce((sum, part) => sum + part.get_preferred_height(width)[1], 0);
         this._fadeInNew(parts);
         // A command card needs room for its buttons.
-        const most = (this._card.visible ? CARD_MAX_HEIGHT : MAX_HEIGHT) * scale;
+        let most = (this._card.visible ? CARD_MAX_HEIGHT : MAX_HEIGHT) * scale;
+        if (this._card.visible)
+            natural = this._fitCard(width, natural, most - ROW_PADDING * scale);
+        // Its buttons always in sight: a card taller than that (a long command, read whole before Run) gets the
+        // room it needs, up to CARD_TALLEST.
+        if (this._card.visible)
+            most = Math.max(most, Math.min(natural + ROW_PADDING * scale, CARD_TALLEST * scale));
         // Set outright: the row kept an earlier, shorter height for them.
         this._texts.set_size(width, Math.min(natural, most - ROW_PADDING * scale));
         // Beside a line or two it sits in the middle; beside more, level with the first line.
@@ -825,9 +860,26 @@ export const VoiceView = GObject.registerClass({
         this._row.height = row;
         if (!this.chatOpen)
             return row;
-        const chat = this._chat.naturalHeight(this.preferredWidth, CHAT_MAX_HEIGHT * scale - row);
+        // Above a tall card the conversation keeps its header and a message, the island taller for it.
+        const chat = this._chat.naturalHeight(this.preferredWidth, Math.max(CHAT_MIN_HEIGHT * scale, CHAT_MAX_HEIGHT * scale - row));
         this._chat.height = chat;
         return row + chat;
+    }
+
+    /** Beside a command card, the oldest steps give way (the newest stays) until the card fits in `room`; returns
+     * the height then. The steps are all in the conversation still. */
+    _fitCard(width, natural, room) {
+        const steps = this._stepsBox.get_children();
+        if (natural <= room || !this._stepsBox.visible)
+            return natural;
+        const spacing = this._stepsBox.get_theme_node().get_length('spacing');
+        for (const step of steps.slice(0, -1)) {
+            if (natural <= room)
+                break;
+            natural -= step.get_preferred_height(width)[1] + spacing;
+            step.hide();
+        }
+        return natural;
     }
 
     // What comes into view fades in as the shape grows to it, rather than show cut off by its edge.
@@ -852,7 +904,7 @@ export const VoiceView = GObject.registerClass({
                 this._timeline.start();
             } else {
                 this._face.queue_repaint();
-                this.emit('frame', 0, STILL_LEVEL);
+                this.emit('frame', 0, STILL_LEVEL, 0);
             }
         } else if (!active) {
             this._timeline.stop();
@@ -894,6 +946,7 @@ export const VoiceView = GObject.registerClass({
         }
     }
 
+    /** Each frame: eases the mic and glow, moves the face, and tells the island. */
     _tick() {
         const t = (Date.now() - this._start) / 1000;
         const dt = Math.min(0.1, Math.max(0, t - this._lastTick));
@@ -916,7 +969,9 @@ export const VoiceView = GObject.registerClass({
         // A little faster while it thinks; summed up, so a change of speed never makes the glow jump.
         const speed = WORKING.includes(this._phase) ? 1.6 : 1;
         this._flow += dt * speed;
-        this.emit('frame', this._flow, this._level);
+        // While it works, the light's streaks shine brighter as they run round; eased, so it never jumps.
+        this._work = (this._work ?? 0) + ((WORKING.includes(this._phase) ? 1 : 0) - (this._work ?? 0)) * (1 - Math.exp(-dt * 3));
+        this.emit('frame', this._flow, this._level, this._work);
     }
 });
 
@@ -925,6 +980,7 @@ const WORKING = ['transcribing', 'thinking', 'acting'];
 /** How many done steps show below the current one. */
 const MAX_DONE_STEPS = 3;
 
+/** An answer cut to MAX_REPLY characters at a word's end, its Markdown kept whole. */
 function clip(text) {
     const trimmed = text.trim();
     if (trimmed.length <= MAX_REPLY)
@@ -941,19 +997,16 @@ function clip(text) {
     return cut;
 }
 
-// Terminals to sign in with, most likely first; the CLI's own sign-in runs there (a browser, then a
-// code pasted back into it), so Isle never handles the code.
-// Terminals, the desktop's chosen one first, each with what comes before the command it runs.
+// Terminals, the desktop's chosen one first, each with what comes before the command. A CLI's sign-in runs
+// there (a browser, then a code pasted back), so Isle never handles the code.
 const TERMINALS = [
     ['xdg-terminal-exec'], ['gnome-terminal', '--'], ['kgx', '--'], ['ptyxis', '--'], ['konsole', '-e'],
     ['xfce4-terminal', '-x'], ['mate-terminal', '-x'], ['terminator', '-x'], ['kitty'], ['alacritty', '-e'],
     ['ghostty', '-e'], ['wezterm', 'start', '--'], ['foot'], ['x-terminal-emulator', '-e'],
 ];
 
-/**
- * Opens a terminal to sign in to `provider` ("agy", "claude", "codex"), with its CLI where isled found it
- * (`found`: nvm, Homebrew…); false without a terminal or it.
- */
+/** Opens a terminal to sign in to `provider` ("agy", "claude", "codex", "grok", "opencode"), with its CLI where isled
+ * found it (`found`: nvm, Homebrew…); false without a terminal or the CLI. */
 export function openSignIn(provider, found = '') {
     const [name, ...args] = SIGN_IN[provider] ?? SIGN_IN.agy;
     const program = (GLib.path_get_basename(found ?? '') === name && found) || GLib.find_program_in_path(name) ||
@@ -980,11 +1033,14 @@ const SET_UP = 'next="$1"; shift; "$@" && printf "\\nIsle: done. %s\\n" "$next" 
     'printf "\\nIsle: that did not finish; run isle-setup-voice again.\\n"; exec bash';
 
 /** How each AI CLI signs in, run in a terminal (`agy` and `claude` ask on start). */
-const SIGN_IN = {agy: ['agy'], claude: ['claude'], codex: ['codex', 'login']};
+const SIGN_IN = {
+    agy: ['agy'], claude: ['claude'], codex: ['codex', 'login'], grok: ['grok', 'login'],
+    opencode: ['opencode', 'auth', 'login'],
+};
 
 /** What to do when no terminal could be opened to sign in. */
 export function signInHint(provider) {
-    return `Run “${(SIGN_IN[provider] ?? SIGN_IN.agy).join(' ')}” in a terminal to sign in, then ask again.`;
+    return `Open a terminal, type “${(SIGN_IN[provider] ?? SIGN_IN.agy).join(' ')}” to sign in, then ask again.`;
 }
 
 /** The AI picked in Settings and the model picked for each, as isled reads them. */
@@ -994,6 +1050,8 @@ export function aiSettings(settings) {
         agy_model: settings.get_string('voice-agy-model'),
         claude_model: settings.get_string('voice-claude-model'),
         codex_model: settings.get_string('voice-codex-model'),
+        grok_model: settings.get_string('voice-grok-model'),
+        opencode_model: settings.get_string('voice-opencode-model'),
     };
 }
 
@@ -1020,8 +1078,10 @@ const TYPED_COMMAND = 'printf "\\033[2mIsle: press Enter to run it, edit it firs
 
 /** Opens a terminal with `command` typed in, waiting for the user to press Enter. */
 function typeInTerminal(command) {
-    // On one line: a newline would be an Enter of its own.
-    const line = command.split('\n').map(part => part.trim()).filter(Boolean).join(' && ');
+    const line = terminalLine(command);
+    // What the user could not read whole before pressing Enter is never typed, as a card never offers it.
+    if (line === null)
+        return failed('not typed: it has hidden characters, or is too long to show whole');
     if (!line)
         return failed('no command to type');
     return inTerminal(['bash', '-c', TYPED_COMMAND, 'isle', line]) ? 'typed into a terminal' : failed('no terminal app found');
@@ -1077,7 +1137,7 @@ export async function voiceContext(settings, notifications, {apps = [], selected
     const system = Shell.AppSystem.get_default();
     return JSON.stringify({
         apps,
-        actions: actionTypes(),
+        actions: actionTypes(settings),
         running: system.get_running().map(app => app.get_name()),
         windows: openWindows(),
         ...aiSettings(settings),
@@ -1093,6 +1153,7 @@ export async function voiceContext(settings, notifications, {apps = [], selected
 // The installed apps' names, sorted, for the AI. Gathering them takes a few milliseconds, enough to stall
 // the island as it opens, so they are kept until apps are installed or removed, and gathered when idle.
 export class InstalledApps {
+    /** Gathers the names when idle, and again whenever apps are installed or removed. */
     constructor() {
         this._names = null;
         this._system = Shell.AppSystem.get_default();
@@ -1100,12 +1161,14 @@ export class InstalledApps {
         this._gatherLater();
     }
 
+    /** Gathered now if the idle gathering hasn't run yet. */
     get names() {
         this._names ??= [...new Set(this._system.get_installed()
             .filter(info => info.should_show()).map(info => info.get_name()))].sort();
         return this._names;
     }
 
+    /** Forgets the names and gathers them again once the shell is idle. */
     _gatherLater() {
         this._names = null;
         if (this._idle)
@@ -1117,6 +1180,7 @@ export class InstalledApps {
         });
     }
 
+    /** Stops listening for installs. */
     destroy() {
         this._system.disconnect(this._changed);
         if (this._idle)
@@ -1167,9 +1231,8 @@ function primarySelection() {
     });
 }
 
-// What each action the AI may answer with does; see `Session::prompt` in isled. `isle` holds the daemon, audio,
-// notifications, the window in front when asked (`target`), its `writer` and `closeThen(callback)`.
-// Each returns what it did, for the AI to go on from (see `runActions`).
+// Each action the AI may answer with (see `Session::prompt` in isled); each returns what it did, for the AI.
+// `isle` holds the daemon, audio, notifications, the window in front (`target`), its `writer` and `closeThen`.
 const ACTIONS = {
     open_url: ({url}) => {
         if (!/^(https?|mailto):/i.test(url ?? ''))
@@ -1196,7 +1259,8 @@ const ACTIONS = {
     },
     focus: ({command}, {daemon}) => daemon.call('pomodoro', command === 'stop' ? 'Stop' : 'Start'),
     add_task: ({text}, {daemon}) => text && daemon.call('todo', 'Add', text),
-    add_event: ({date, text}, {daemon}) => date && text && daemon.call('calendar', 'Add', date, text),
+    // To the calendar the Calendar page adds to (an account's, or Isle's own).
+    add_event: ({date, text}, {daemon, eventCalendar}) => date && text && daemon.addEvent(eventCalendar(), date, text),
     done_task: ({id}, {daemon}) => Number.isInteger(id) && daemon.call('todo', 'SetDone', id, true),
     remove_task: ({id}, {daemon}) => Number.isInteger(id) && daemon.call('todo', 'Remove', id),
     cancel_reminder: ({id}, {daemon}) => Number.isInteger(id) && daemon.call('reminders', 'Dismiss', id),
@@ -1469,11 +1533,8 @@ const FILE_ROOTS = ['/media/', '/mnt/', '/run/media/'];
 /** Kinds of file that run something when opened; the assistant never opens those. */
 const RUNS = /x-desktop|java-archive|executable|x-sharedlib|x-msdownload|x-ms-dos|x-msi|x-deb|x-rpm|x-appimage|x-shellscript|x-perl|x-python|x-ruby|x-php/;
 
-/**
- * Runs `callback` with `path` (from ~, or absolute) as a Gio.File if it is there and allowed: in the home
- * folder (not a hidden part of it) or on a removable drive, and not a link; `opening` also refuses
- * anything that would run. Returns whether it ran.
- */
+/** Runs `callback` with `path` (from ~, or absolute) as a Gio.File if allowed: in home (not a hidden part) or on
+ * a removable drive, never a link; `opening` also refuses anything that would run. Returns whether it ran. */
 async function withFile(path, callback, {opening = false} = {}) {
     if (typeof path !== 'string' || !path.trim())
         return false;
@@ -1536,6 +1597,7 @@ function openChromeProfile(profile) {
     return undefined;
 }
 
+/** Opens `uri` in its default app, launched as from the shell. */
 function openUri(uri) {
     Gio.AppInfo.launch_default_for_uri(uri, global.create_app_launch_context(0, -1));
 }
@@ -1591,6 +1653,7 @@ async function setPowerMode(mode) {
     return ok ? `power mode is now ${mode}` : failed(output.split('\n').at(-1) || 'it did not change');
 }
 
+/** Starts `argv` without waiting; failed when the program is not installed. */
 function spawn(argv) {
     const program = GLib.find_program_in_path(argv[0]);
     if (!program)
@@ -1623,6 +1686,7 @@ function queryInfo(file, attributes, flags = Gio.FileQueryInfoFlags.NONE) {
     });
 }
 
+/** Whether `file` is a folder; false when it can't be read. */
 async function isFolder(file) {
     try {
         return (await queryInfo(file, 'standard::type')).get_file_type() === Gio.FileType.DIRECTORY;
@@ -1694,9 +1758,10 @@ function propertySet(name, path, iface, property, value) {
     });
 }
 
-/** What this extension can do: isled offers the AI nothing else. */
-export function actionTypes() {
-    return Object.keys(ACTIONS);
+/** What this extension can do: isled offers the AI nothing else. Not the Notifications page while it is left out. */
+export function actionTypes(settings) {
+    const notifications = !settings.get_strv('hidden-pages').includes('notifications');
+    return Object.keys(ACTIONS).filter(type => type !== 'notifications' || notifications);
 }
 
 /** Runs the AI's actions in order; `isle` is what they act on (see `ACTIONS`). Resolves to what each did,

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! Whether a camera is in use, counted from inotify opens and closes of `/dev/video*`.
 //! A change only counts after [`SETTLE`], to ignore quick probes by udev or PipeWire.
@@ -26,6 +27,7 @@ struct Camera {
     open: usize,
 }
 
+/// Keeps `camera_in_use` up to date for as long as isled runs.
 pub async fn watch(iface: InterfaceRef<SystemService>) -> anyhow::Result<()> {
     let inotify = Inotify::init()?;
     let mut watches = inotify.watches();
@@ -89,6 +91,7 @@ pub async fn watch(iface: InterfaceRef<SystemService>) -> anyhow::Result<()> {
     }
 }
 
+/// Whether any camera has a handle open.
 fn in_use(cameras: &HashMap<WatchDescriptor, Camera>) -> bool {
     cameras.values().any(|camera| camera.open > 0)
 }
@@ -110,6 +113,7 @@ async fn rescan(watches: &mut Watches, cameras: &mut HashMap<WatchDescriptor, Ca
     }
 }
 
+/// The `/dev/video*` nodes there are now.
 fn camera_paths() -> Vec<PathBuf> {
     let Ok(entries) = fs::read_dir(DEVICES) else {
         return Vec::new();
@@ -125,6 +129,7 @@ fn camera_paths() -> Vec<PathBuf> {
         .collect()
 }
 
+/// Starts watching opens and closes on `path`.
 fn add_camera(
     watches: &mut Watches,
     cameras: &mut HashMap<WatchDescriptor, Camera>,

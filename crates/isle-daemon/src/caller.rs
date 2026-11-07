@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! Who may call what: the methods that read the user's clipboard or steer the assistant (which can type
 //! and open things) answer GNOME Shell, where the extension runs, and no other program on the bus.
@@ -37,6 +38,7 @@ async fn shell_owner(connection: &Connection) -> Option<String> {
     Some(owner.as_str().to_owned())
 }
 
+/// True when the sender is GNOME Shell's own bus name; no shell or no sender never passes.
 fn allowed(sender: Option<&str>, shell: Option<&str>) -> bool {
     matches!((sender, shell), (Some(sender), Some(shell)) if sender == shell)
 }

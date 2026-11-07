@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
-//! Commands the AI asks to run (installing an app, say), once the user pressed Run: each is a systemd unit
-//! of its own (the user's, or the system's when it needs root), so it carries on whatever happens to the
-//! island, the screen lock or isled. GNOME Shell starts it (so the password dialog, if any, is GNOME's own);
-//! isled watches its log until it ends, and finds it again after a restart.
+//! Commands the AI asks to run, once the user pressed Run. Each is a systemd unit GNOME Shell starts (its
+//! password dialog for root), so it outlives the island and isled, which follows its log, even after a restart.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -55,6 +54,7 @@ pub struct Task {
 }
 
 impl Task {
+    /// The systemd unit's name, unique per task.
     pub fn unit(&self) -> String {
         format!("isle-run-{}", self.id)
     }
@@ -119,9 +119,8 @@ impl Task {
     }
 }
 
-/// The PATH a command gets: the system's, and for the user's own commands where their programs live
-/// (npm, nvm, pipx, cargo, Homebrew…); never as root, so a program the user can write cannot stand in
-/// for `apt`.
+/// The system's PATH, plus the user's own program folders (npm, cargo, Homebrew…) for user commands only:
+/// as root, a program the user can write must never stand in for `apt`.
 fn path(scope: Scope) -> String {
     let home = dirs::home_dir().unwrap_or_default();
     let mut dirs: Vec<String> = Vec::new();
@@ -269,6 +268,7 @@ fn shown(output: &str) -> String {
     tail(&mask_secrets(body), MAX_OUTPUT)
 }
 
+/// From the wrapper's last line; none while it runs or if it was cut short.
 fn exit_code(output: &str) -> Option<i32> {
     let at = output.rfind(EXIT_MARK)?;
     output[at + EXIT_MARK.len()..]
@@ -279,6 +279,7 @@ fn exit_code(output: &str) -> Option<i32> {
         .ok()
 }
 
+/// What the log gained since `offset`, which moves on past it.
 async fn read_from(path: &Path, offset: &mut u64) -> std::io::Result<String> {
     let mut file = tokio::fs::File::open(path).await?;
     file.seek(std::io::SeekFrom::Start(*offset)).await?;
@@ -313,6 +314,7 @@ pub struct Running {
     pub tasks: Vec<Task>,
 }
 
+/// tasks.json.
 pub fn store() -> Store<Running> {
     // Tests (the eval among them) keep their own: never a task the user's isled then finds.
     Store::new(if cfg!(test) { "tasks-test" } else { "tasks" })
@@ -336,6 +338,7 @@ fn remember_in(store: &mut Store<Running>, task: &Task) {
     store.save_now(&running);
 }
 
+/// Also written at once, for the same reason.
 fn forget_in(store: &mut Store<Running>, task: &Task) {
     let mut running = store.load();
     running.tasks.retain(|t| t.id != task.id);
@@ -361,7 +364,6 @@ pub async fn settled(task: &Task) -> Option<(Ended, String)> {
     Some((Ended::Stopped, shown(&output)))
 }
 
-/// Deletes a task's log once it has been told.
 /// Whether `task` (as read back from tasks.json) is one Isle made: its log in Isle's folder, its id plain.
 pub fn is_own(task: &Task) -> bool {
     task.log.parent() == Some(logs().as_path())
@@ -373,6 +375,7 @@ pub fn is_own(task: &Task) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
+/// Deletes a task's log once it has been told.
 pub fn clean(task: &Task) {
     std::fs::remove_file(&task.log).ok();
 }
@@ -490,10 +493,8 @@ pub fn refused(command: &str) -> Option<&'static str> {
     None
 }
 
-/// `command` as the AI may write it, with `sudo` (or pkexec) before its commands: the command without them,
-/// and whether it needs root (then the whole line runs as root). Only a sudo where a command starts counts,
-/// outside quotes (`grep sudo log` keeps its word); one with options but -E (`sudo -u postgres …`) asks for
-/// what Isle can't do: Err with why.
+/// Takes off a `sudo` or `pkexec` where a command starts, outside quotes, and says if the line needs root.
+/// Sudo options other than -E (`sudo -u postgres …`) ask for what Isle can't do: Err with why.
 pub fn without_sudo(command: &str, root: bool) -> Result<(String, bool), &'static str> {
     let chars: Vec<char> = command.trim().chars().collect();
     let word_at = |i: usize| -> String {
@@ -797,8 +798,8 @@ mod tests {
 
     #[tokio::test]
     async fn follows_a_command_to_its_end() {
-        // As systemd would, with the wrapper: the log fills, then the exit line. "two" comes well after a
-        // poll (POLL), even on a slow CI runner, so "one" is seen on its own first.
+        // As systemd would, with the wrapper: the log fills, then the exit line. "two" comes well after a poll (POLL),
+        // so "one" is seen alone first, and the end well before the alive check (no unit here) would call it stopped.
         let task = prepare("echo hi", "Say hi", Scope::User).unwrap();
         let log = task.log.clone();
         let wrapper = format!("{{ {WRAPPER}; }} >> {} 2>&1", log.display());
@@ -807,7 +808,7 @@ mod tests {
                 "-c",
                 &wrapper,
                 "isle",
-                "echo one; sleep 2; echo two; exit 3",
+                "echo one; sleep 1; echo two; exit 3",
             ])
             .spawn()
             .unwrap();

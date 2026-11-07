@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! Speech to text: `isle-whisper` (whisper.cpp, on the GPU through Vulkan or on the processor).
 
@@ -41,6 +42,7 @@ fn native() -> Option<PathBuf> {
         .find(|path| path.is_file())
 }
 
+/// Where `isle-setup-voice` puts the speech models.
 fn models_dir() -> PathBuf {
     dirs::data_dir().unwrap_or_default().join(MODELS_DIR)
 }
@@ -129,6 +131,7 @@ fn threads() -> usize {
 struct Answered(String);
 
 impl fmt::Display for Answered {
+    /// The helper's own words.
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.write_str(&self.0)
     }
@@ -136,6 +139,7 @@ impl fmt::Display for Answered {
 
 impl std::error::Error for Answered {}
 
+/// A running `isle-whisper`, kept for one voice request.
 pub struct Whisper {
     _child: Group,
     stdin: ChildStdin,
@@ -160,6 +164,7 @@ impl Whisper {
         Self::start_with(helper, model, language, cpu)
     }
 
+    /// Starts the helper, on the processor only when `cpu` is set.
     fn start_with(helper: PathBuf, model: &str, language: &str, cpu: bool) -> anyhow::Result<Self> {
         let mut command = Command::new(&helper);
         if cpu {
@@ -194,6 +199,7 @@ impl Whisper {
         })
     }
 
+    /// The helper's next JSON line; an `error` in it becomes an `Answered`.
     async fn read(&mut self) -> anyhow::Result<Value> {
         let line = self
             .lines
@@ -207,6 +213,7 @@ impl Whisper {
         Ok(message)
     }
 
+    /// The words in `audio` (16 kHz mono), tried once more on the processor if the GPU crashed.
     pub async fn transcribe(&mut self, audio: &[i16]) -> anyhow::Result<String> {
         let mut result = self.attempt(audio).await;
         let stopped = match &result {
@@ -235,6 +242,7 @@ impl Whisper {
         result
     }
 
+    /// Waits for the helper to load its model once, then asks it.
     async fn attempt(&mut self, audio: &[i16]) -> anyhow::Result<String> {
         if !self.ready {
             let ready = self.read().await?;
@@ -252,6 +260,7 @@ impl Whisper {
         self.ask(audio).await
     }
 
+    /// Hands the recording over as a file and reads back the text.
     async fn ask(&mut self, audio: &[i16]) -> anyhow::Result<String> {
         let bytes: Vec<u8> = audio.iter().flat_map(|s| s.to_le_bytes()).collect();
         write_private(&self.audio, &bytes)?;
@@ -259,10 +268,35 @@ impl Whisper {
         self.stdin
             .write_all(format!("{request}\n").as_bytes())
             .await?;
-        Ok(self.read().await?["text"]
-            .as_str()
-            .unwrap_or_default()
-            .to_owned())
+        let reply = self.read().await?;
+        let text = reply["text"].as_str().unwrap_or_default().to_owned();
+        if text.trim().is_empty() {
+            // Why "Didn't catch that": no speech found in it, or what Whisper made of it not counted as said.
+            // Never the words themselves: only how many, and how unlike speech each part sounded.
+            let set_aside: Vec<String> = reply["dropped"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|part| {
+                    let words = part["text"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .split_whitespace()
+                        .count();
+                    format!(
+                        "{words} words at {:.2}",
+                        part["no_speech"].as_f64().unwrap_or(f64::NAN)
+                    )
+                })
+                .collect();
+            info!(
+                "speech recognition found no words: {:.1} s of audio, {} ms of it speech, set aside as not speech: [{}]",
+                audio.len() as f32 / super::mic::RATE as f32,
+                reply["speech_ms"],
+                set_aside.join(", ")
+            );
+        }
+        Ok(text)
     }
 }
 

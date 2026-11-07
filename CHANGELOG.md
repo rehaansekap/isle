@@ -6,6 +6,584 @@ All notable changes to Isle are listed here. The format follows
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-11-07
+
+With more than one display, the brightness shows in the island instead of a flickering popup. To update:
+click Update on the new-version alert (or Settings → About → Update), then log out and back in.
+
+### Fixed
+
+- With more than one display, changing the brightness while the pointer was on another display showed GNOME's own
+  brightness popup on the island's display, flickering as GNOME showed and took it back display after display. The
+  brightness of the island's own display (a laptop's screen) shows in the island, wherever the pointer is;
+  another display's brightness shows in GNOME's popup on that display. The volume is as before: with
+  the pointer on another display, GNOME's popup shows on every display. (#51) Thanks to @Hazem-Samir.
+
+## [1.7.0] - 2026-11-06
+
+A new glass look, a pill-shaped island, a Large size, the date beside the clock, a shortcut for every page,
+Bluetooth battery alerts with a Devices page, and the island on every display. Super+V opens Isle's calendar
+again, and the island does less work while it moves than in 1.6.0. Tested on GNOME 46 to 51 (Ubuntu 24.04 to
+26.10, Debian 13, Fedora 41 to 45, Arch). To update: click Update on the new-version alert (or Settings → About →
+Update), then log out and back in.
+
+### Added
+
+- **A pill-shaped island (#42).** Settings → Island → Appearance → Shape → Pill: the island floats free of the
+  top of the screen, round all over: 30 px tall and centred in the top bar (which grows to 36 px round it), just
+  below the bar, or 8 px from the top of a display without one. Alerts and the open island grow down from it,
+  with the same spring. The notch stays the default.
+- **A large island (#39).** Settings → Island → Appearance → Size → Large: the open island 720 px wide instead of
+  600, and every page 210 px tall instead of 150, each laid out for the room: more notifications and reminders
+  at once, a larger month, cover and timer ring. The text keeps its size.
+- **The date beside the clock (#38).** Settings → Island → Appearance → Show the date: "Fri 6" before the time on
+  the closed island. It makes way for music, a call or the timer. Off by default.
+- **The island on every display.** Settings → Island → Appearance → Display → All displays: every display shows
+  the closed island and each alert as it comes; pointing at one brings the island there, to hold the alert or open
+  as usual, and it goes back to the display in use once closed. With a window full screen on one display, alerts
+  keep showing on the others (and over it too, with Over full-screen apps on). Auto-hide works on each display on
+  its own. Thanks to @jvspier.
+- **Low battery on Bluetooth devices (#49).** Settings → Island → Alerts → Bluetooth battery: when earbuds, a mouse,
+  a keyboard or a controller gets down to 20%, 10% and 5%, the island says so as it does for the laptop, a red
+  ring round the device's icon with "Low battery". Once per level, each device on its own, and again after it has
+  charged more than 5 points above that level. It shows during Do Not Disturb, like the laptop's. Off by default.
+- **Devices page (#49).** Settings → Island → Pages → Devices: a card for each connected Bluetooth device, with its
+  icon, its name and "Connected" (or "Low battery"), its battery and level, green, or red when low. Up to three, a
+  row each from the top of the page; from four, two side by side. The tab shows only while a device is connected.
+  It uses the levels your devices already report: nothing is checked over and over. Off by default.
+- **A shortcut for every page.** Settings → Island → Shortcuts gives any page a shortcut of its own (none at first)
+  and lists Super+V on the row of the page it opens. A shortcut already used by GNOME, by your own custom
+  shortcuts or by Isle is refused, saying by what. A × beside a shortcut takes it off, Super+V too; pressing
+  Super+V in the shortcut sheet of the Shelf's or the Calendar's row gives it back. In the island opened from the
+  keyboard, Ctrl+Tab and Ctrl+Shift+Tab change page and Ctrl+1 to 9 pick a tab.
+
+### Changed
+
+- **Super+V opens the Calendar page by default** (it opened the clipboard history). To keep the clipboard
+  history on Super+V: Settings → Island → Shortcuts, click the Shelf's row and press Super+V. A choice you made
+  before is kept.
+- **New glass.** The clear end of the Glass slider (Settings → Island → Appearance) is clear glass with a thick
+  edge, no longer a flat dark smoke: what is behind the island keeps its shapes and colours, lightly blurred and a
+  little darkened; near the edge the glass bends what is behind it, with a thin rainbow, and the edge catches the
+  light, brightest at the top left. White text stays clear on it: about 15:1 over a dark wallpaper and 9:1 over a
+  white page. Along the slider it settles smoothly into the dark end, which is exactly as it was.
+- Auto-hide slides the closed island up into the top edge and back down, instead of fading it.
+- The Shelf's file window looks the same whatever GTK theme is installed: a theme in `~/.config/gtk-4.0` could
+  draw a coloured square frame around the island while a file was dragged in, and turn each file's × into a wide
+  square.
+
+### Fixed
+
+- **Super+V did nothing** when set to "GNOME's calendar and notifications": GNOME skips its own calendar menu while
+  Isle hides the clock. That choice is gone; Super+V always opens Isle (the Calendar page, or the clipboard history
+  if you prefer), those who had picked it get the Calendar page, and with the page it opens turned off it opens the
+  other one instead of nothing. It stays GNOME's own shortcut (Super+M too): Isle adds none of its own. (#50)
+- The closed island coming back from auto-hide is centred again and shows all of itself: what it showed was left
+  where it was before it hid, off-centre once its width had changed meanwhile (the time, a song), and a fade cut
+  short could leave it half there. (#40)
+- **opencode 2** works: its models are listed and requests answer (#44), and Isle deletes its own conversations
+  without starting opencode's background service on a port you may be using. Thanks to @AlphaBeast97.
+- The Shelf's Files tab no longer flickers as it opens: the files no longer pop in again (only a file just dropped
+  does), their names, × and icons no longer change or move a pixel a moment after opening, and the names break
+  before the extension ("MuriSugi12." over "txt").
+- The Shelf's file window can no longer freeze while a shelved file sits on a network mount that went away.
+- The Shelf's bar keeps its height when Super+V opens it with the search field: the tabs and filters grew taller
+  with the field and the cards shorter.
+- With the top bar moved to the bottom of the screen by another extension, the closed island on the main display no
+  longer shows as a square black block at the top. It hangs from the screen's top edge with rounded corners, as on
+  a display without the bar, and Isle leaves that bar's colour and height alone, so it matches the extension's bars
+  on the other displays. Thanks to @jvspier.
+
+### Performance
+
+More features, and no heavier: lighter while the island moves, and still nothing at all at rest. Measured against
+1.6.0 in the same GNOME 50 session, medians of three runs:
+
+| | 1.6.0 | 1.7.0 |
+|---|---|---|
+| At rest: redraws, Isle's CPU and wakeups, isled's CPU and D-Bus traffic | none | none |
+| An alert waiting under a pointer that isn't moving | about 4 wakeups/s | none |
+| Opening the island: CPU, slowest frame's work | 245 ms, 14.2 ms | 222 ms, 9.3 ms |
+| Closing the island: CPU | 190 ms | 164 ms |
+| Switching pages: CPU | 100 ms | 96 ms |
+| 50 openings and closings: actors left behind | 0 | 0 |
+| isled memory | 10.1 MB | 10.3 MB |
+
+- With the Glass look, opening and closing take 11 to 18% less work than before this release's changes, and the
+  auto-hide slide about a third less: the blur behind the glass is no longer made again every frame as the island
+  moves, only the shape cut from it.
+- Every animation runs at 60 fps. The new auto-hide slide is longer than 1.6.0's fade, so it costs a little more
+  (26 ms against 18 ms of CPU per slide), still well under a frame's work at a time.
+- The glass edge and its rainbow are worked out in the same pass as the blur: the new glass costs no more than the
+  old one.
+
+## [1.6.0] - 2026-11-03
+
+Send files between the Shelf and your phone, auto-hide, alerts over full-screen apps, a black top bar beside
+your windows, and opencode in the assistant. Calls, music and notifications behave better too. To update:
+click Update on the new-version alert (or Settings → About → Update), then log out and back in.
+
+### Added
+
+- **Send files to and from your phone (#28).** In the Shelf, open Files → Phone and scan the QR code with
+  your phone's camera. A page opens in the phone's browser (any phone, nothing to install) where you can save
+  the Shelf's files and send photos and files to the Shelf. The island asks before each phone gets in, with a
+  4-digit code the phone shows too. Sharing works only on your own network, behind a secret link, and stops
+  by itself after 10 idle minutes, when you press Stop, lock the screen, or the network changes. A violet dot
+  on the closed island shows while you share. If a firewall (ufw) blocks phones, the island shows the one
+  command that lets them in. See SECURITY.md.
+- **Save to Downloads.** Files the Shelf keeps itself (from your phone, or a copied picture) have a ↓ button
+  that saves a copy in your Downloads folder. It never overwrites a file you have.
+- **Auto-hide (#19, #22).** Settings → Appearance → Auto-hide: Always (after the pointer leaves it for a few
+  seconds), With the top bar (when another extension hides the top bar), or Beside windows (while a window is
+  maximized or reaches the top). Alerts, the open island and the assistant still show. Point at its place in
+  the top bar to bring it back. Off by default. Based on Ashish Ranjan's pull request #20, thank you!
+- **Alerts over full-screen apps (#22).** Settings → Alerts → Over full-screen apps: notifications, calls and
+  timers show over a video or game, then the island hides again. Off by default.
+- **Black top bar beside windows (#26).** Settings → Appearance: with a see-through or grey top bar, the bar
+  turns black while a window touches it (maximized or tiled to the top), so a bright wallpaper doesn't
+  distract you while you work. Off by default.
+- **opencode in the assistant (#4).** The fifth AI, found by itself once opencode is installed; pick it in
+  Settings → Assistant. The Model list only offers what your opencode can use: the models you used last (the
+  last one is the default), those of each provider you signed in to with `opencode auth login` (for example
+  GPT with your ChatGPT account), OpenCode's free models, and your Zen or Go plan's. opencode runs in Isle's
+  own folders and can't run commands, change files or read your files: like the other AIs it only answers,
+  and anything that changes your computer waits for you to press Run. Needs opencode 1.4.8 or newer. There is
+  no usage card for it, as OpenCode has no way for apps to read a plan's usage.
+
+### Changed
+
+- **Notifications show more of their text (#29).** Up to three lines under the title, instead of one line cut
+  short. Click one to read it all.
+
+### Fixed
+
+- **Calls (#35).** Only a real call shows as a call: a call app (WhatsApp, Telegram, Discord, Zoom, Slack,
+  Teams…) or a browser on a call page (Meet, Zoom, Teams…). Dictation, voice assistants, and apps that record
+  their own sound (Swiftify's equaliser, visualizers) no longer show a green phone. The call preview shows the
+  right window.
+- **Music (#36).** A video or voice note in a browser tab (WhatsApp Web, X, YouTube) no longer stays in the
+  closed island after it ends. Once it's over, or paused for a minute, the island goes back to the clock, or
+  to the song paused in your music app. Songs paused in a music app stay as before. The Music page also has a
+  × to hide something paused until it plays again.
+- **Notifications.** Every notification can be removed with × or Clear, as in GNOME. One an app keeps (a
+  recorder's "Finish Recording") couldn't be before. Turning Notifications off in Settings also removes the
+  ones already in the island.
+- **Glass (#31).** With the Glass look and a see-through top bar, the bar no longer flickers with Blur my
+  Shell's panel blur.
+- **Shelf.** Opening the Shelf with files in it no longer shows their names doubled, as if bold, for a moment.
+- **Assistant.**
+  - Antigravity (agy 1.4 and later) shows as signed in again, with all its models in Settings.
+  - When the assistant doesn't catch what you said, the log now says why (#37), without your words. See it
+    with `journalctl --user -u isled`.
+  - An AI agent's switch in Settings no longer turns itself off at login.
+  - Turning the assistant off or on with the island open resizes it at once.
+- **Settings.**
+  - Changing the clock format updates the Calendar and Usage pages at once.
+  - Drop-down choices show in full, nothing is cut in a narrow window, and Settings updates when something
+    is changed elsewhere.
+  - Rows that don't apply (clipboard history with the Shelf page off, the shortcut with the assistant off)
+    are greyed out.
+  - "You're up to date" only shows once GitHub has actually answered.
+  - Reset all settings resets the timer's lengths too.
+- **Uninstall** also removes Isle's folders for Grok and opencode and its other leftovers.
+
+### Performance
+
+As light as 1.5.3. Measured on GNOME 51 with an Intel GPU, the same 22 actions (opening and closing the
+island, tabs, lyrics, the assistant, alerts, the Shelf), and each closed island at rest:
+
+| | 1.5.3 | 1.6.0 |
+|---|---|---|
+| Drawing work per frame (p95), Black | 4.23 ms | 4.58 ms |
+| Drawing work per frame (p95), Glass | 4.29 ms | 3.43 ms |
+| GNOME Shell CPU while the island works, Black | 17.7 % | 16.2 % |
+| GNOME Shell CPU while the island works, Glass | 17.6 % | 14.7 % |
+| Closed island with the clock | 4–6 frames a minute | 4–6 frames a minute |
+| Closed island with a timer | 62–64 frames a minute | 62 frames a minute |
+| isled at rest | 0 wake-ups a minute, 4–8 MB | 0 wake-ups a minute, 4–9 MB |
+| isled sharing with a phone connected | – | 16 wake-ups a minute, 0 % CPU, about 9 MB |
+| Memory after 100 opens and closes | no leak | no leak |
+
+A few tenths of a millisecond or a point or two of CPU either way is within what one run differs from the
+next. What keeps 1.6.0 light:
+
+- Phone sharing runs only while you share: no server, port or timer otherwise, and it stops by itself after 10
+  idle minutes. The phone's page asks for news once every 25 seconds and does nothing else in between.
+- Auto-hide listens to the window signals Isle already had, with no timer while it is off; the black bar
+  beside windows watches windows only while it is turned on.
+- Call detection asks PulseAudio once per new stream, shared with the privacy dots, never on a timer.
+- opencode runs only while it answers, like the other AIs.
+
+## [1.5.3] - 2026-11-01
+
+A quick fix for 1.5.2's clock. To update: click Update on the new-version alert (or Settings → About →
+Update), then log out and back in.
+
+### Fixed
+
+- The island's time no longer shows with the wrong sizes after the clock's format changes while it shows (Settings
+  → Appearance → Clock, or GNOME's own 12/24-hour setting): "01:57" could come with its last digit small, or
+  "1:57 AM" with a full-size AM, until the next minute. The time and its AM or PM are now two labels, each
+  with its own size, in the closed island and the open island's header (#25).
+
+## [1.5.2] - 2026-11-01
+
+Sharp clipboard pictures, AM/PM and a 24/12-hour choice for the island's clock, and Glass no longer makes
+apps flicker beside Blur my Shell. To update: click Update on the new-version alert (or Settings → About →
+Update), then log out and back in.
+
+### Added
+
+- With a 12-hour clock, the island's time shows AM or PM beside it, a little smaller, in the closed
+  island and the open island's header (#25). A Clock choice in Settings → Appearance picks 24-hour
+  (20:40) or 12-hour (8:40 PM) for every time Isle shows, or follows GNOME's clock as before.
+
+### Fixed
+
+- Clipboard images are sharp on their cards, also on a 200% display (#24). Thumbnails are made for
+  the card's shape at twice its pixels, and a screenshot too small or thin to fill the card (a 1913×56
+  strip, a small icon) shows at its own pixels in the middle instead of blown up into a blur. Images
+  copied with an earlier version get the new thumbnails by themselves shortly after Isle starts.
+- With space below the island (Settings → Appearance), the top bar keeps its height and the closed
+  island is a little shorter instead, so the bar's other buttons and icons stay centred (#14).
+- A right or middle click on an empty part of the top bar no longer leaves a maximized window following the
+  pointer (#27). GNOME 50 and later start that drag with any button; while Isle is on, only the left button
+  drags a window down from the bar again, as before GNOME 50.
+- The assistant's command card shows whole, with its Run and Deny buttons: after a long run of steps it
+  could slip below the island's edge. Beside a card the oldest steps give way (all of them stay in the
+  conversation), and each step reads as one plain line, without bold or code marks.
+- With the Glass look, apps under the island no longer flicker when Blur my Shell blurs them (its
+  "liquid glass" and other pipelines) (#23). Glass copies only an app's own picture to blur behind the
+  island, not what other extensions add to its window.
+
+### Performance
+
+As light as 1.5.1 or lighter. Measured on GNOME 51 with an Intel GPU, the same 60 actions three times each
+(opening and closing the island, tabs, lyrics, the assistant, alerts, the Shelf), and a minute of each closed
+island at rest:
+
+| | 1.5.1 | 1.5.2 |
+|---|---|---|
+| Drawing work per frame, Black | 3.16 ms | 2.49 ms |
+| Drawing work per frame, Glass | 3.42 ms | 3.25 ms |
+| GNOME Shell CPU while the island works, Black | 24.2 % | 19.7 % |
+| GNOME Shell CPU while the island works, Glass | 25.2 % | 24.4 % |
+| Missed frames at 60 Hz, all actions | 9–10 | 9–10 |
+| GNOME Shell CPU, closed island with the clock | about 1 % | about 1 % |
+| isled at rest | 0 wake-ups a minute, 4–8 MB | 0 wake-ups a minute, 4–8 MB |
+| Memory after 100 opens and closes | no leak | no leak |
+
+A point or two of CPU either way is within what one run differs from the next. What keeps 1.5.2 light:
+
+- Glass copies only the picture of the apps that are under the island, not the rest of their windows, so it draws
+  less and never sets off another extension's effects a second time.
+- Clipboard thumbnails are made by isled on a thread of their own, never in GNOME Shell. They are made once for
+  the card's size, so GNOME Shell holds no bigger picture than the card shows; those from an earlier version are
+  made again only once, one at a time, 15 seconds after Isle starts.
+- AM/PM is part of the clock's own text, redrawn only when the minute changes; the clock choice adds no timer.
+- The assistant's card and steps are measured once per change; the steps that give way are only hidden.
+- As in 1.5.1, isled sleeps while nothing needs it, and the music bars rest while you are away from the computer.
+
+## [1.5.1] - 2026-10-31
+
+A tidier closed island that fits what it shows, Glass made new with a slider from clear to dark,
+lyrics that stay in time for the whole song, a smoother and lighter island, typed timer lengths (thanks
+to @Ashishranjan980), and many fixes. To update from 1.5: click Update on the new-version alert (or
+Settings → About → Update), then log out and back in.
+
+### Added
+
+- With the island inside the top bar, a little space now stays below it, so it no longer touches
+  maximised windows (#14). It is on by default; Settings → Appearance → Space below the island
+  turns it off for the earlier look.
+- Scrolling or swiping over the open island's tabs changes the page again: one page a swipe or wheel
+  click, stopping at the first and last page. Scrolling over a page's own content (lists, lyrics,
+  calendar) still never changes the page (#13).
+- The timer's Work and Break lengths can be typed: click the minutes, type a number, and Enter or a
+  click elsewhere keeps it (Esc restores the old length). Thanks to @Ashishranjan980.
+- With the timer as the closed island's only activity, it shows its time left beside the clock:
+  dimmed while paused, green on a break (#17).
+- With two activities at once, the closed island shows each as one small sign, one on each side of
+  the clock (a song's cover, a call's phone, the timer's ring), with the privacy dots beside them, all
+  in the one island; anything more is in the open island.
+
+### Changed
+
+- The closed island is as wide as what it shows: its signs sit evenly at both ends, as far in as from
+  its top, the clock stays exactly centred (the Do Not Disturb moon sits before it), and it grows or
+  shrinks with its content instead of stretching to a fixed width.
+- During a call the closed island shows the green phone and the time; the call's length is on the
+  Call page.
+- The Focus page is called Timer, in its tab, in Settings and in the Pages list; the phase inside it
+  still reads Focus (#17). Its lengths hold still from Start until Reset, so a session can't change
+  part way.
+- Glass is new: clearer and calmer, an even frosted look over light pages, gentle colour over bright
+  wallpapers, a clean dark closed island, a soft lit edge, and every button, row, field and alert made
+  of the same glass. Toggles that are on take your accent colour; grey text reads better over bright
+  windows. Glows follow the island's shape on Black and Glass alike. Your Glass setting from 1.5
+  carries over.
+- A Glass slider in Settings → Appearance runs from clear glass to dark smoked glass, as GNOME's own
+  blurred menus: what is behind dimmed, its colour kept, never a flat grey. Its buttons, rows and
+  fields follow it. Rows, cards and fields are plain fills, never outlined boxes, on Black and Glass
+  alike.
+- The open island's pages have the same room on every side, rows and columns line up across each
+  page, and buttons and switches come in one size each. Super+V moved to Clipboard History and the
+  privacy dots to Appearance in Settings.
+
+### Performance
+
+Smoother and lighter. The island's shape and the assistant's light are drawn on the graphics card
+rather than redrawn each frame, the island widens in whole pixels so text stays sharp, lyrics draw
+only the lines in view, the Shelf and Notifications are ready before you switch to them, and isled
+sleeps while nothing needs it. Measured on GNOME 51 with an Intel GPU, before and after:
+
+| | 1.5.0 | 1.5.1 |
+|---|---|---|
+| Opening lyrics, slowest first frame | 47–50 ms | 14–16 ms |
+| GNOME Shell CPU while a song plays | 15–17 % | 13–14 % |
+| Opening the Shelf or Notifications the first time | 40–54 ms | 7–20 ms |
+| Missed frames at 144 Hz (Glass, one set of actions) | 45–55 | 20–35 |
+| Drawing work per frame while the island animates | 0.5–0.75 ms | 0.18–0.29 ms |
+| Music bars, drawing per frame | 1.35 ms | 0.9 ms |
+| GNOME Shell CPU with the assistant open | 24–32 % | 15–20 % |
+| Frames that shimmer while the island widens | 21–36 | 0 |
+| isled wake-ups a minute while idle | 6–16 | 0 |
+| Memory after 200 opens and closes | no leak | no leak |
+
+### Fixed
+
+- Lyrics stay in time for the whole song: while the island shows the music, Isle checks with the
+  player every second, so buffering, ads, seeks made inside the player and speed changes no longer
+  leave them ahead or behind, also when a player changes speed without saying so. With the island
+  closed, Isle checks nothing (#15).
+- The top bar no longer flickers beside the island when Blur my Shell 76 or later is on, and Isle's
+  top bar colour works beside it again: Isle now keeps its colour alongside other extensions that
+  style the top bar.
+- Typing in the island's fields works on GNOME 50 and 51: a click into a field gets the keyboard.
+  On GNOME 46, a click outside the island ends typing without opening it again.
+- The timer's Resume button is no longer cut to "Resu…", and a typed "180" shows in full.
+- The calendar's six-week months fit their page.
+- The open tab's name is no longer cut after changing the display's scale while Isle runs.
+- A player that stops answering no longer holds up the music in the island, and Isle stops asking a
+  player for its position if GNOME Shell goes away.
+- The island announces a new version again (since 0.7.0 only Settings → About did).
+- Uninstalling stops Isle's background service even where no user service manager runs.
+
+## [1.5.0] - 2026-10-29
+
+A glass look for the island, an Apps page for your screen time (thanks to @Ashishranjan980), events
+that go to your real calendar, smoother page switches, and many fixes, among them Zen and Firefox
+music keeping its place and a sun or moon on each world clock (thanks to @caffeinepx). To update from
+1.4: click Update on the new-version alert (or Settings → About → Update), then log out and back in.
+
+### Added
+
+- Events you add on the Calendar page, or ask the assistant for, go to your real calendar: Google or any
+  account in Settings → Online Accounts. A chip in the add field shows which calendar; click it to pick
+  another (each account's calendars, or Isle on this computer). Offline or signed out, the event stays in
+  Isle instead of being lost.
+- World Clocks show by each city whether it is day, evening or night there: a sun, a setting sun or a
+  moon, in Isle's own icons. Thanks to @caffeinepx.
+- Glass: Settings → Appearance → Island can make the island dark glass instead of black, showing what is
+  behind it (windows and wallpaper) blurred, as GNOME's menus look with Blur my Shell, cut cleanly to the
+  island's shape. On glass its buttons are see-through, an answer (Allow, Run) takes GNOME's accent colour,
+  and the assistant's and the alerts' light keeps to the edge without burning to white. Black stays the
+  default, and as it was.
+- App usage: an Apps page shows how long each application was in front today, over the last seven days
+  or the last 30, most used first. Off until its switch in Settings → Pages is turned on; only then is
+  the app in front timed, and its tab shown. Five minutes without input pause it, unless a video keeps
+  the screen awake, and locking the screen stops it. Kept only on this computer, for 30 days; Settings
+  can clear it. With every page on, the open island grows evenly on both sides to fit its tabs. Thanks
+  to @Ashishranjan980.
+
+### Fixed
+
+- Switching pages in the open island no longer stutters the first time after changing the island's
+  look, accent colour or text size: the pages are laid out again ahead, out of sight, as after a login.
+  A switch now only touches the two tabs that change.
+- With Codex as the AI, a request no longer fails with "failed to initialize sqlite state runtime" when
+  Isle started two Codexes at once (an answer and the model list) on a new day. And a short command
+  ("kunci layar") no longer sometimes waits two minutes to fail: Codex could get stuck writing only
+  blank space after the action; Isle now stops it there and runs the answer it wrote.
+- The Shelf's Files tab no longer keeps a file's tile after it is removed quickly, nor shows a black box
+  the first time it opens: its drag-and-drop window now always draws.
+- Music from Zen and Firefox keeps its place: the bar no longer jumps back to the start when they report
+  0 while playing, a seek lands where it was made, and a length they drop after a seek is kept. Thanks
+  to @caffeinepx. A player that starts the same song over (repeat one), or goes back to its start, is
+  followed there, and the next video in Firefox starts from its own start, not where the last one was.
+- A call in Google Meet no longer shows as WhatsApp when WhatsApp Web is open in another window: of the
+  windows naming a call service, the one showing a call under way (a meeting's code, "call", "meeting")
+  comes first, then the one in front.
+- Notifications show their app's own colour icon at full size (Ghostty, Chrome), rather than shrunk
+  onto a grey badge as if it were a one-colour icon.
+- A reminder added with Enter keeps a sharp tick ring: opening, its row no longer squeezes the ring,
+  which left it a blurred blob.
+- Adding an event: Enter clears the field and shows the event at once, faint until its calendar lists
+  it, so a slow server no longer invites a second Enter that added it twice. A line refused (a time
+  alone) comes back to the field.
+- New events no longer offer, or try, calendars that only read, such as a subscribed holiday calendar.
+- An event added while its account's calendar is out of reach (offline, or the network up but the
+  server not) is kept in Isle with a ring for its dot, "Offline · syncs once online", and sent there
+  once in reach, never twice; before, it could sit in Evolution's own queue and never be sent.
+  Deleted in Isle while it was being sent, it is taken out of the calendar too.
+- An account's calendar no longer goes missing from the choice for the session when isled asked
+  about it while offline, or just as it was opening.
+- A time written in four digits, last ("Dinner 1930") or after "jam", "at" ("jam 1800"), is read as
+  one; a year ("Reunion 2015") stays in the title.
+- As an event is typed, the field shows when it takes place, as it will be read ("8:00 PM",
+  "All day"), so a 12-hour clock's "8:00" is seen to be the morning's before Enter. A range on a
+  12-hour clock says AM or PM once when both share it ("9:00 – 10:00 AM").
+- An empty Shelf says one thing as the island opens, "No files on the shelf", in the island and in
+  the drag-and-drop helper alike. The island's own words said the helper was missing (it had
+  answered before the island listened) until the helper's other words took over: a blink. Its icon
+  and words no longer turn bolder a moment after it opens either: the island alone draws them.
+- The Shelf's files grow in with the island as it opens: the drag-and-drop window drawing them came
+  in whole while the rest still faded in, and a one-line name and the × moved as it took over. It now
+  waits for the island, fades in over the island's own tiles, which match it.
+- A video with no title tag (in VLC, for one) shows in the island under its file name, rather than
+  "Nothing playing"; and a player stopped since no longer hides a paused song in another.
+- Isle says things in plain words: no program names, commands, exit codes or raw errors on screen.
+  Voice that isn't set up points to Set up; the assistant's steps name folders and what it checks
+  ("Checking what's installed…"), not paths and command lines; a command that didn't finish says so;
+  and Settings' update, bug report and AI alert messages say what happened and what to do.
+- Logging out on GNOME 51 with alerts waiting no longer leaves errors in the log.
+- The Shelf's dashed outline stays the same wide dashes as its drag-and-drop window comes over it (it
+  turned to fine dots, a flicker), and flashes as a file lands.
+- In the island's fields, the cursor no longer runs into the placeholder's first letter.
+- A call in the Discord app shows as Discord, with its window in the preview and Open: its microphone
+  goes by its voice engine's name, so it showed as "WEBRTC VoiceEngine" with nothing to open. Isle now
+  asks the sound server which app holds the microphone, and never shows an engine's name. A call
+  keeps its own app when another app opens the microphone too.
+- The Calendar page shows every month's events, keeps today's loaded for the event alerts however
+  long the session runs, and opens without reloading: GNOME's own calendar and Isle kept asking for
+  different dates, each dropping the other's.
+- Claude Code and Codex ask in their terminals at once while Isle can't answer (the screen locked,
+  Isle off), rather than waiting minutes for it; Always is offered only where it is kept.
+- When Codex turns a request down, the assistant says why rather than waiting until it times out.
+- An event, task or reminder the assistant adds is added even when the AI splits its title and time
+  (Grok did): it said it was noted, and nothing was.
+- Do Not Disturb follows a focus session only while it runs (not while the next one waits to start),
+  and stays off for the session once you turn it off.
+- A notification that comes while you are away waits on screen, unread, until you are back; an
+  "Offline" alert no longer shows after the connection is back.
+- Pausing and resuming a video in Zen or Firefox, or changing its speed, keeps its place; the player
+  switch offers only players with something to show; lyrics are looked up only when turned on.
+- A password stays out of the clipboard history when its password manager quits before clearing it.
+- Isle keeps running when a Shelf file sits on a network drive that went offline, and the Shelf keeps
+  its files in view while Isle restarts.
+
+### Changed
+
+- While Isle's event alert is on, GNOME's own calendar reminder for the same event no longer comes
+  too: it showed as a second alert, and clicked, opened a cramped Reminders window with Dismiss and
+  Dismiss All. Only a reminder of the very occurrence Isle alerts of, or did alert of, goes; others
+  (an all-day event, a task, a day ahead, a meeting under way, one Do Not Disturb kept quiet) come as
+  before.
+- The day's events are grey rows with a dot of their own calendar's colour (Google's, holidays'),
+  rather than every one tinted blue with a bar down its side.
+- isled holds about 10 MB, and no longer grows over hours (it reached 16 MB): big blocks it frees
+  (a cover, a download) go back to the system, and its libraries are built for size, as isled
+  itself is (isle-whisper's keep full speed).
+- The open island changes page only by its tabs: a sideways swipe, or a scroll over a page with no list,
+  no longer turns the page by surprise. Lists and lyrics scroll as before.
+- Alerts fit what they say, with the same room on every side (12 px round the icon, its corners curved
+  round it), rather than a short one sitting in a wide island. Off a black bar they no longer leave more
+  room above than below.
+- The assistant at work in the closed island is as far from its edge as the song's cover on the other
+  side, and a little smaller (17.5 px in the top bar, 19.5 below it), as a solid shape looks bigger than
+  a picture.
+- Alerts with buttons (a call's Accept and Decline, an agent's Allow) fit what they say too, from a short
+  one to 440 px, with small buttons under the words; no more wide empty space beside them.
+- The Notifications list shows each notification as a card of its own, its buttons on a line under its
+  words rather than crowding them when the pointer is over it.
+- Buttons are never cut short: an alert widens for them (up to 560 px), and those that still don't fit go
+  on to a line below, in the alert and in the Notifications list. A single button beside words that
+  would be cut moves under them, and a notification's words take up to two lines.
+- Alerts lit along their edges (an agent's ask, a command to run) keep their buttons clear of the light.
+- The island sits centred on its display to the pixel, on every display.
+- Lighter: a song playing under the closed island costs GNOME Shell about a sixth of the CPU it did (the
+  bars move as before, on a timer rather than through every frame of the display), and so does the
+  recording dot.
+- The open island's tabs show their icon in lines, and filled for the page that is open; icons are the same
+  weight and look the same size side by side, drawn sharp at their own size, and light up more calmly under
+  the pointer. The calendar's icon is new, after Lucide's (ISC; see gnome-extension/NOTICE-lucide.txt).
+- The button to press is the right one: Allow (not Always) on an agent's ask, and a notification's last
+  button only when it doesn't turn something down (Accept, not Decline).
+- Shelf files look as they do in Files: a PDF or other document shows its first page whole, made as Files
+  makes it when there is no thumbnail yet; files without one keep the theme's icon.
+- Bluetooth speakers, game controllers, laptops and tablets get icons of their own; other devices show the
+  Bluetooth icon.
+- The assistant's light tells what it is doing: while it works, the light running round its edge shines
+  brighter, and it brightens a moment as the answer arrives; at rest it glows as before. An agent's ask
+  breathes gently a few times while it waits for you, and a done alert lights up once as it shows. A file
+  landing on the Shelf flares a little longer.
+
+## [1.4.0] - 2026-10-27
+
+### Added
+
+- Updating takes a click: when a new Isle is out, its alert's Update opens Settings → About, where Update
+  downloads it, checks it and installs it (no terminal, no password), then Log Out finishes it. If it
+  can't, it says why and offers the terminal command. It goes on if Settings is closed. A .deb, .rpm or
+  Arch package install says how to update its package.
+- Settings → Island → Pages turns each tab of the open island on or off: Music, Notifications, Focus,
+  Reminders, Shelf, Calendar and AI Usage. A page turned off takes what goes with it: Music its song in the
+  closed island, its bars and the new-song alerts; Notifications the unread dot; Shelf gives Super+V back
+  to GNOME. One page always stays on.
+- The AI assistant can be turned off in the same place (and first thing on Settings → Assistant): the ✦
+  and Super+I go, and Isle never asks an AI.
+- World clocks: the time in other cities, under the day's events on the Calendar page; click them (or the
+  globe) for how far ahead or behind each is, and its day when it isn't yours. It's GNOME's own list, the
+  one in its calendar menu and the Clocks app; add and remove cities in Settings → Island → World Clocks.
+- The top bar beside the island goes from glass to black on a slider, rather than a choice of the two;
+  the island itself stays black. Your choice carries over.
+- The assistant offers only the models your plan includes, by their full names (Opus 5.5, GPT-6.1-Sol,
+  Gemini 3.8 Flash), read from your own account, with your plan's name in Settings. When a plan no
+  longer includes the model you picked (a subscription that lapsed), the assistant uses your plan's
+  default and says so once; your pick comes back by itself when the plan allows it again. A request
+  refused for its model is answered with the default rather than failing.
+- Grok (xAI's `grok`) as a fourth AI for the assistant, found by itself once installed and signed in,
+  with your plan's models, and its plan on the Usage page (a Free plan's week, though Grok doesn't say
+  how much of it is used). It runs in Isle's own folder, kept to answering: no commands or files of its
+  own, and none of your Claude Code setup. Thanks to @caffeinepx.
+- A notification's alert shows all of its buttons, as GNOME's banner does ("Decline" and "Accept", not
+  just the first), and a click does what GNOME's would: the app is told, and the notification goes,
+  unless it is one that updates itself.
+
+### Changed
+
+- Codex is listed as "Codex (ChatGPT)": it is how Isle uses ChatGPT, with your ChatGPT plan.
+- Plans are named as the apps name them: ChatGPT "Pro" (was "Pro Lite"), as Codex does.
+- Claude's Fable models are not offered: in the assistant they would use your usage credits without asking.
+- The open island's tabs and its pages line up: the open tab's pill, each page's first and last items
+  and the settings icon sit on the same left and right edges.
+- Settings → Island → Alerts starts with a Notifications switch, on: apps' notifications in the island.
+  Turned off, GNOME shows its own banners (it was "GNOME's notification banners", off).
+- Opening, closing and switching tabs do less work: the island's shape is drawn once a frame instead of
+  twice, and a tab's name is measured once, so the motion stutters less, most of all on fast displays.
+
+### Fixed
+
+- In GNOME's light style the top bar's icons and text turned dark on Isle's black or glass bar; they stay
+  white.
+- With the top bar hidden by another extension (Hide Top Bar, Just Perfection), or on a display without
+  one, a maximized window such as Firefox covered the whole screen and GNOME stopped drawing the island
+  over it: it vanished while still taking the pointer, came back with a website's menu or tooltip, and
+  flickered. It is drawn now, as GNOME's own menus and notifications are, while such a window is there.
+- Hide Top Bar turned on (or updated) while Isle ran put the bar over the island, so hovering it didn't
+  open it while the bar showed. The bar goes back below the island.
+- An update that fails part way (a full disk) leaves the installed programs and extension whole, and two
+  installs at once (Settings and a terminal) can't mix: the second says so and stops.
+- Hovering or clicking a notification alert opens the Notifications page; with that page turned off, it
+  opened another one.
+- A call's preview showed another window of the browser when the call's tab was in, or moved to, a window
+  of its own: it follows the window that shows the call.
+- The first Codex request of a day could fail: the daily clean-up could delete Codex's databases while
+  Codex was starting.
+- Settings listed Codex's models as saved under an earlier plan, offering models the plan no longer (or
+  not yet) included; picking one made every request fail.
+
 ## [1.3.1] - 2026-10-26
 
 ### Fixed
@@ -23,8 +601,7 @@ All notable changes to Isle are listed here. The format follows
   "Screenshot captured" after 2.5. Once the pointer leaves an alert it goes 1.5 seconds later, its button
   included, rather than starting its time over. An answer from the assistant stays at most 8 seconds.
 - Under the pointer, an alert that the pointer doesn't open (one with a button, such as "Show in Files")
-  and an answer from the assistant show a small × on their icon to put them away, as macOS's
-  notifications do. It closes them while the keys are with another app, where Esc can't reach the island.
+  and an answer from the assistant show a small × on their icon to put them away. It closes them while the keys are with another app, where Esc can't reach the island.
 - Do Not Disturb shows as a moon before the time (or a call's or recording's length), whatever the island
   holds beside it. Before, music, a timer or the unread dot hid the moon. The Notifications page says what
   still gets through while it is on.
@@ -608,7 +1185,7 @@ Lighter and smoother all round, with nothing changed in how Isle looks.
 
 ### Added
 
-- Isle draws the island's icons itself, in SF Symbols' manner (volume,
+- Isle draws the island's icons itself, in one rounded style (volume,
   brightness, keyboard light, touchpad, airplane mode, camera, Bluetooth,
   Wi-Fi, display, warning, update, recording), with the system colours;
   a battery on its side replaces GNOME's upright one.
@@ -1088,7 +1665,7 @@ The first release.
   tile), the title with its time on the right, and a close button in the
   time's place under the pointer. Lists fade out at an edge that scrolls
   on instead of being cut.
-- Alerts look like iOS's: icon badges lit in the alert's colour with a soft
+- Alerts look cleaner: icon badges lit in the alert's colour with a soft
   gradient, and Caps Lock as its own icon with an "On" / "Off" pill.
 - Type set in Inter, which the installer
   now puts in `~/.local/share/fonts/isle`; semibold titles, tighter
@@ -1172,7 +1749,17 @@ The first release.
   dark, vivid ones bright.
 - Text is at least 12 px throughout.
 
-[Unreleased]: https://github.com/zickrian/isle/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/zickrian/isle/compare/v1.7.1...HEAD
+[1.7.1]: https://github.com/zickrian/isle/compare/v1.7.0...v1.7.1
+[1.7.0]: https://github.com/zickrian/isle/compare/v1.6.0...v1.7.0
+[1.6.0]: https://github.com/zickrian/isle/compare/v1.5.3...v1.6.0
+[1.5.3]: https://github.com/zickrian/isle/compare/v1.5.2...v1.5.3
+[1.5.2]: https://github.com/zickrian/isle/compare/v1.5.1...v1.5.2
+[1.5.1]: https://github.com/zickrian/isle/compare/v1.5.0...v1.5.1
+[1.5.0]: https://github.com/zickrian/isle/compare/v1.4.0...v1.5.0
+[1.4.0]: https://github.com/zickrian/isle/compare/v1.3.1...v1.4.0
+[1.3.1]: https://github.com/zickrian/isle/compare/v1.3.0...v1.3.1
+[1.3.0]: https://github.com/zickrian/isle/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/zickrian/isle/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/zickrian/isle/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/zickrian/isle/compare/v1.0.6...v1.1.0

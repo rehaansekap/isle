@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
-//! The agent loop: the AI may answer with tools isled runs here (find_files, recent_files, top_processes…)
-//! and with desktop actions the extension runs (open_app, window, arrange…). Until it says it is done, the
-//! results of both go back to it, so it can take one step after another; each shows on the island. Its
-//! last step runs before it answers too, so a failure is never answered as done.
+//! The agent loop: tools isled runs (find_files, check…) and desktop actions the extension runs go back to the AI
+//! step by step until it is done; its last step runs before it answers too, so a failure is never answered as done.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -117,6 +116,7 @@ const TOOLS: &[&str] = &[
     "check",
 ];
 
+/// One of `TOOLS`.
 fn is_tool(action: &Value) -> bool {
     action["type"]
         .as_str()
@@ -130,22 +130,28 @@ pub fn after_close(action: &Value) -> bool {
         .is_some_and(|kind| AFTER_CLOSE.contains(&kind))
 }
 
+/// The user's home folder, empty if it cannot be found.
 fn home() -> PathBuf {
     dirs::home_dir().unwrap_or_default()
 }
 
-/// What the island says while a tool runs, e.g. "Searching ~/Downloads for “ttd”…".
+/// What the island says while a tool runs, in the user's words, e.g. "Searching Downloads for “ttd”…":
+/// folders by name, and a check by what it looks at, never its command line.
 fn describe(call: &Value) -> String {
     match call["type"].as_str() {
         Some("find_files") => {
             let terms = strings(&call["terms"]);
-            let within = call["in"].as_str().filter(|w| !w.is_empty()).unwrap_or("~");
+            let within = call["in"].as_str().unwrap_or_default();
+            let place = folder_name(within).unwrap_or_else(|| "your files".into());
             match terms.first() {
-                Some(term) => format!("Searching {within} for “{term}”…"),
-                None => format!("Searching {within}…"),
+                Some(term) => format!("Searching {place} for “{term}”…"),
+                None => format!("Searching {place}…"),
             }
         }
-        Some("list_folder") => format!("Looking in {}…", path_of(call)),
+        Some("list_folder") => match folder_name(path_of(call)) {
+            Some(name) => format!("Looking in {name}…"),
+            None => "Looking in your home folder…".into(),
+        },
         Some("recent_files") => "Looking at your recent files…".into(),
         Some("read_text") => format!(
             "Reading {}…",
@@ -156,15 +162,40 @@ fn describe(call: &Value) -> String {
             None => "Looking through your apps…".into(),
         },
         Some("top_processes") => "Checking what’s using the computer…".into(),
-        Some("check") => format!(
-            "Checking · {}",
-            call["command"].as_str().unwrap_or_default()
-        ),
+        Some("check") => check_words(call["command"].as_str().unwrap_or_default()).into(),
         Some("chrome_profiles") => "Looking at Chrome’s profiles…".into(),
         _ => "Working…".into(),
     }
 }
 
+/// A folder by its name ("Downloads"); `None` for the home folder itself.
+fn folder_name(path: &str) -> Option<String> {
+    let path = path.trim().trim_end_matches('/');
+    let home = home();
+    if path.is_empty() || path == "~" || std::path::Path::new(path) == home {
+        return None;
+    }
+    path.rsplit('/')
+        .next()
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+}
+
+/// What a read-only check looks at, in plain words.
+fn check_words(command: &str) -> &'static str {
+    let program = command.split_whitespace().next().unwrap_or_default();
+    match program {
+        "journalctl" => "Reading the system log…",
+        "ping" | "iw" | "rfkill" | "nmcli" | "ip" | "resolvectl" => "Checking the network…",
+        "apt-cache" | "apt" | "dpkg" | "dpkg-query" | "rpm" | "dnf" | "pacman" | "flatpak"
+        | "snap" | "npm" | "pipx" | "which" | "dkms" | "ubuntu-drivers" | "fwupdmgr"
+        | "xdg-mime" | "xdg-settings" => "Checking what’s installed…",
+        _ if command.contains("--version") => "Checking what’s installed…",
+        _ => "Checking this computer…",
+    }
+}
+
+/// The `path` asked for, or ~.
 fn path_of(call: &Value) -> &str {
     call["path"]
         .as_str()
@@ -172,6 +203,7 @@ fn path_of(call: &Value) -> &str {
         .unwrap_or("~")
 }
 
+/// A list of words, or one word on its own, as AIs write either.
 fn strings(value: &Value) -> Vec<String> {
     match value {
         Value::Array(items) => items
@@ -193,6 +225,7 @@ async fn run(call: Value) -> String {
         .unwrap_or_else(|err| format!("the search failed: {err}"))
 }
 
+/// The file and app tools, blocking.
 fn run_now(call: &Value, home: &Path) -> String {
     match call["type"].as_str() {
         Some("find_files") => match files::root(call["in"].as_str().unwrap_or(""), home) {
@@ -235,6 +268,7 @@ pub type Desk = UnboundedSender<Act>;
 pub struct TooLong;
 
 impl fmt::Display for TooLong {
+    /// The reason, in words.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("the AI took too long to answer")
     }
@@ -244,6 +278,7 @@ impl std::error::Error for TooLong {}
 
 /// What answers: the AI, or a stand-in in tests.
 pub trait Ask {
+    /// One answer to `prompt`; `activity` hears its steps, `draft` its words as they come.
     async fn ask(
         &mut self,
         prompt: &str,
@@ -253,6 +288,7 @@ pub trait Ask {
 }
 
 impl Ask for Brain {
+    /// The real AI, with its steps and draft followed.
     async fn ask(
         &mut self,
         prompt: &str,
@@ -271,12 +307,14 @@ pub struct Out<'a> {
     pub cards: &'a UnboundedSender<Value>,
 }
 
+/// Asks once within `ASK_TIMEOUT`, and strips any `spawn` or `stop` the AI wrote itself.
 async fn ask_in_time(brain: &mut impl Ask, prompt: &str, out: &Out<'_>) -> anyhow::Result<Answer> {
     let mut answer = tokio::time::timeout(ASK_TIMEOUT, brain.ask(prompt, out.activity, out.draft))
         .await
         .map_err(|_| anyhow::Error::new(TooLong))??;
     // What starts or stops a command is isled's to say (see `run_command`), never the AI's.
     for action in &mut answer.actions {
+        super::answer::line_in_text(action);
         if let Some(action) = action.as_object_mut() {
             action.remove("spawn");
             action.remove("stop");
@@ -285,10 +323,8 @@ async fn ask_in_time(brain: &mut impl Ask, prompt: &str, out: &Out<'_>) -> anyho
     Ok(answer)
 }
 
-/// Asks the AI and carries out each step it takes (tools here, desktop actions through `desk`), handing it
-/// what they found or did, until it answers the user. The answer's own actions run first too, unless they
-/// wait for the island to close: once they all worked it is `checked`, and only a failure goes back to
-/// the AI. `activity` hears each step as it happens (its own web searches too); empty means thinking.
+/// Asks the AI and runs each step until it answers; the answer's own actions run too, bar those for after the island
+/// closes (`checked` once all worked; a failure goes back). `activity` hears each step; empty means thinking.
 pub async fn think(
     brain: &mut impl Ask,
     prompt: &str,
@@ -615,11 +651,23 @@ mod tests {
     fn describes_each_step() {
         let find =
             json!({"type": "find_files", "terms": ["ttd", "signature"], "in": "~/Downloads"});
-        assert_eq!(describe(&find), "Searching ~/Downloads for “ttd”…");
+        assert_eq!(describe(&find), "Searching Downloads for “ttd”…");
         assert_eq!(
             describe(&json!({"type": "find_files", "terms": "cv"})),
-            "Searching ~ for “cv”…"
+            "Searching your files for “cv”…"
         );
+        let list = json!({"type": "list_folder", "path": "~/Documents/Work/"});
+        assert_eq!(describe(&list), "Looking in Work…");
+        let home = json!({"type": "list_folder", "path": "~"});
+        assert_eq!(describe(&home), "Looking in your home folder…");
+        let check = |command| describe(&json!({"type": "check", "command": command}));
+        assert_eq!(check("dpkg -l vlc"), "Checking what’s installed…");
+        assert_eq!(check("code --version"), "Checking what’s installed…");
+        assert_eq!(
+            check("journalctl --user -b -p err"),
+            "Reading the system log…"
+        );
+        assert_eq!(check("uname -a"), "Checking this computer…");
         assert!(is_tool(&find) && !is_tool(&json!({"type": "open_url"})));
     }
 

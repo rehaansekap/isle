@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! "Remind me in ten minutes": reminders kept until shown, so one due while the
 //! screen was locked still shows afterwards.
@@ -8,6 +9,7 @@ use serde::{Deserialize, Serialize};
 /// The most reminders kept at once.
 pub const CAPACITY: usize = 50;
 
+/// One reminder: what to say and when.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Reminder {
     pub id: u64,
@@ -16,6 +18,7 @@ pub struct Reminder {
     pub due_ms: i64,
 }
 
+/// The pending reminders, kept sorted by due time, with ids that never repeat.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Reminders {
     items: Vec<Reminder>,

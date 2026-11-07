@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! Claude Code: hooks in its settings.json running `isled --agent-hook claude`: `PermissionRequest` (its
 //! permission prompt, answered from the island), `Notification` (it waits for the user) and `Stop` (done).
@@ -25,10 +26,12 @@ pub fn hooked(path: &Path) -> bool {
     json_hooks::hooked(path, &SPEC)
 }
 
+/// Adds Isle's hooks beside the user's own, keeping a backup of the file.
 pub fn install(path: &Path, command: &str) -> anyhow::Result<()> {
     json_hooks::install(path, command, &SPEC)
 }
 
+/// Takes Isle's hooks out again; false if none were there.
 pub fn remove(path: &Path) -> anyhow::Result<bool> {
     json_hooks::remove(path, &SPEC)
 }
@@ -49,6 +52,7 @@ pub fn command(isled: &str, ai: &str) -> String {
     format!("{} --agent-hook {ai}", shell_quote(isled))
 }
 
+/// Single quotes unless the path is plain, so a folder with a space still runs.
 fn shell_quote(text: &str) -> String {
     let plain = |c: char| c.is_ascii_alphanumeric() || "/._+-".contains(c);
     if !text.is_empty() && text.chars().all(plain) {

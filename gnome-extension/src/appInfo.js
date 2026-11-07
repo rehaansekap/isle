@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 // Gio.DesktopAppInfo: GLib 2.86 (GNOME 49) moved it to GioUnix and warns on the
 // old name, the only one GNOME 46 has. No shell imports: prefs share this file.

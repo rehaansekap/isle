@@ -1,21 +1,24 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 // Notifications: a heading with Do Not Disturb and Clear (and, while it is on, what still gets through),
-// over a list of one-line rows, newest first. Click one to open it. See docs/product-spec.md.
+// over a list of cards, newest first. Click one to open it. See docs/product-spec.md.
 
 import Clutter from 'gi://Clutter';
 import GObject from 'gi://GObject';
 import Pango from 'gi://Pango';
 import St from 'gi://St';
 
-import {VERTICAL} from '../compat.js';
+import {VERTICAL, px} from '../compat.js';
 import * as Format from '../format.js';
 import {notificationIcon, plainBody} from '../notifications.js';
-import {icon, iconButton, isSymbolic, label, ownIcon, pillButton, setButtonIcon, wrapLines} from '../widgets.js';
+import {Lines, WrapLayout, icon, iconButton, isSymbolic, label, ownIcon, pillButton, setButtonIcon, wrapLines} from '../widgets.js';
 import {Page} from './page.js';
 
 /** A card offers at most this many of its notification's buttons ("Mark as read", "Accept"). */
 const MAX_ACTIONS = 3;
+/** A notification's text shows on up to this many lines, the last ending in "…" when there is more. */
+const BODY_LINES = 3;
 
 /** The app's icon, small beside its row: a colour one as is, a symbolic one on a grey rounded square. */
 function notificationBadge(gicon) {
@@ -29,8 +32,10 @@ function notificationBadge(gicon) {
     });
 }
 
+/** The page over `center`, which keeps the notifications and Do Not Disturb. */
 export const NotificationsPage = GObject.registerClass(
 class NotificationsPage extends Page {
+    /** The list itself is built late, on the first warm-up or showing. */
     _init(daemon, center, {height} = {}) {
         super._init(daemon, {
             style_class: 'isle-page isle-notifications',
@@ -38,7 +43,6 @@ class NotificationsPage extends Page {
         });
         this.name = 'notifications';
         this._center = center;
-        /** Apps whose stack of notifications is unfolded. */
 
         this.add_child(this._buildBar());
         this.add_child(this._buildDndNote());
@@ -62,10 +66,12 @@ class NotificationsPage extends Page {
         this.connect('destroy', () => this._onDestroy());
     }
 
+    /** Unseen notifications make it the page to open on. */
     get relevant() {
         return this._center.hasUnseen;
     }
 
+    /** Unseen ones put a dot on the tab. */
     get hasNews() {
         return this._center.hasUnseen;
     }
@@ -96,7 +102,7 @@ class NotificationsPage extends Page {
     _buildBar() {
         const bar = new St.BoxLayout({style_class: 'isle-notifications-bar'});
         bar.add_child(label('Notifications', 'isle-notifications-heading', {x_expand: true, y_align: Clutter.ActorAlign.CENTER}));
-        this._dndButton = iconButton('isle-bell', 'isle-button-flat isle-dnd-toggle', () => {
+        this._dndButton = iconButton('isle-bell', 'isle-button-round isle-button-small isle-dnd-toggle', () => {
             this._center.dnd = !this._center.dnd;
         }, {size: 13, accessibleName: 'Do Not Disturb'});
         this._dndButton.y_align = Clutter.ActorAlign.CENTER;
@@ -119,6 +125,7 @@ class NotificationsPage extends Page {
         return this._dndNote;
     }
 
+    /** The scrolling list of rows, with "No notifications" in its place when empty. */
     _buildList() {
         this._list = new St.BoxLayout({...VERTICAL, style_class: 'isle-notification-list'});
         this._scroll = new St.ScrollView({
@@ -143,6 +150,7 @@ class NotificationsPage extends Page {
         return column;
     }
 
+    /** Rebuilds now if shown, or marks the list stale for the next showing. */
     _onListChanged({seen = true} = {}) {
         if (this.active)
             this._update({seen});
@@ -156,12 +164,13 @@ class NotificationsPage extends Page {
         return notification.id ?? `${notification.source?.id || 'app'}:${notification.title || ''}:${notification.datetime?.to_unix?.() || 0}`;
     }
 
+    /** Rebuilds every row; `seen` false leaves them unread even while shown. */
     _update({seen = true} = {}) {
         this._stale = false;
         /** Each row's "5m ago", with when it came, to bring up to date without a rebuild. */
         this._times = [];
         const notifications = this._center.notifications;
-        this._clearButton.visible = notifications.some(n => !n.resident);
+        this._clearButton.visible = notifications.length > 0;
 
         // Prune any expanded keys that are no longer in notifications
         const activeKeys = new Set(notifications.map(n => this._notificationKey(n)));
@@ -183,6 +192,7 @@ class NotificationsPage extends Page {
         this.emit('height-changed');
     }
 
+    /** The bell turns into a checked moon, and the note shows, while Do Not Disturb is on. */
     _updateDnd() {
         const on = this._center.dnd;
         if (on)
@@ -193,6 +203,7 @@ class NotificationsPage extends Page {
         this._dndNote.visible = on;
     }
 
+    /** A row: the app's icon, who, what under it on up to three lines, its buttons, and when; × under the pointer. */
     _row(notification) {
         const key = this._notificationKey(notification);
         const container = new St.BoxLayout({...VERTICAL, style_class: 'isle-notification-row-container', x_expand: true});
@@ -221,7 +232,6 @@ class NotificationsPage extends Page {
     /** Collapsed row: single line summary with ellipsis preview, hover tools, and expand chevron. */
     _buildCollapsedRow(notification, key, onExpand) {
         const content = new St.BoxLayout({style_class: 'isle-notification', x_expand: true});
-
         const titleText = (notification.title || notification.source?.title || '').replace(/\s+/g, ' ').trim();
         const rawBody = this._sharing ? '' : plainBody(notification).replace(/\s+/g, ' ').trim();
         const hasExpandable = rawBody.length > 0;
@@ -272,8 +282,9 @@ class NotificationsPage extends Page {
 
         content.add_child(line);
 
-        // The time, and in its place under the pointer the buttons and ×.
-        const corner = new St.Widget({layout_manager: new Clutter.BinLayout(), y_align: Clutter.ActorAlign.CENTER});
+        // The time, and in its place under the pointer the ×.
+        const corner = new St.Widget({layout_manager: new Clutter.BinLayout(),
+            y_align: Clutter.ActorAlign.CENTER});
         const time = label(Format.ago(notification.datetime), 'isle-notification-time', {x_align: Clutter.ActorAlign.END});
         time.connect('destroy', () => {
             const idx = this._times.findIndex(([t]) => t === time);
@@ -282,6 +293,7 @@ class NotificationsPage extends Page {
         });
         this._times.push([time, notification.datetime]);
         corner.add_child(time);
+        // Every one can be put away, a resident one too, as in GNOME's list.
         const tools = new St.BoxLayout({style_class: 'isle-notification-tools', x_align: Clutter.ActorAlign.END, opacity: 0, visible: false});
         const actions = this._sharing ? [] : (notification.actions ?? []).slice(0, MAX_ACTIONS);
         for (const action of actions) {
@@ -420,6 +432,12 @@ class NotificationsPage extends Page {
         return card;
     }
 
+    /** New cards are built ahead while another page is open too. */
+    get warmsOpen() {
+        return true;
+    }
+
+    /** Builds the list ahead, if it is out of date. */
     warmUp() {
         if (this._stale)
             this._update();
@@ -437,6 +455,7 @@ class NotificationsPage extends Page {
         this.markCold();
     }
 
+    /** Opening the page counts as seeing them all. */
     onActivate() {
         this._center.acknowledgeAll();
         // Rebuilt only if something came or went while it was closed; else just the times move on.
@@ -453,6 +472,7 @@ class NotificationsPage extends Page {
         }
     }
 
+    /** Lets go of the notification center's signals. */
     _onDestroy() {
         this._centerHandlers.forEach(id => this._center.disconnect(id));
         this._times = [];

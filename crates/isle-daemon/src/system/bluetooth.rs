@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::StreamExt;
+use isle_core::battery::DeviceBatteries;
 use zbus::fdo::{ObjectManagerProxy, PropertiesProxy};
 use zbus::message::Type as MessageType;
 use zbus::names::InterfaceName;
@@ -24,6 +26,8 @@ const BATTERY_GRACE: Duration = Duration::from_millis(2500);
 /// only if nothing changed during [`BATTERY_GRACE`], so a bounced device is not listed.
 type Generations = Arc<Mutex<HashMap<String, u64>>>;
 
+/// Follows BlueZ: connected devices and their batteries, with an alert as one connects or goes, and as its
+/// battery goes low.
 pub async fn watch(system: Connection, iface: InterfaceRef<SystemService>) -> anyhow::Result<()> {
     let manager = ObjectManagerProxy::builder(&system)
         .destination(BLUEZ)?
@@ -54,6 +58,7 @@ pub async fn watch(system: Connection, iface: InterfaceRef<SystemService>) -> an
     }
     publish(&iface, |state| state.bluetooth = connected, None).await;
     let generations = Generations::default();
+    let mut lows = DeviceBatteries::default();
 
     loop {
         tokio::select! {
@@ -68,12 +73,15 @@ pub async fn watch(system: Connection, iface: InterfaceRef<SystemService>) -> an
                 };
                 if interface == DEVICE {
                     if let Some(now) = changed.get("Connected").and_then(|v| bool::try_from(v).ok()) {
+                        if !now {
+                            lows.forget(path.as_str());
+                        }
                         connection_changed(&system, &iface, &generations, path.to_owned(), now).await;
                     }
                 } else if interface == BATTERY
                     && let Some(percent) = changed.get("Percentage").and_then(|v| u8::try_from(v).ok())
                 {
-                    set_battery(&iface, path.as_str(), percent).await;
+                    set_battery(&iface, &mut lows, path.as_str(), percent).await;
                 }
             }
             Some(signal) = added.next() => {
@@ -84,7 +92,7 @@ pub async fn watch(system: Connection, iface: InterfaceRef<SystemService>) -> an
                     .and_then(|props| props.get("Percentage"))
                     .and_then(|v| u8::try_from(v).ok());
                 if let Some(percent) = percent {
-                    set_battery(&iface, args.object_path().as_str(), percent).await;
+                    set_battery(&iface, &mut lows, args.object_path().as_str(), percent).await;
                 }
             }
             else => return Ok(()),
@@ -104,6 +112,7 @@ async fn properties_changed(system: &Connection, interface: &str) -> zbus::Resul
     MessageStream::for_match_rule(rule, system, None).await
 }
 
+/// A device connected or went; a connection is announced once it has held for `BATTERY_GRACE`.
 async fn connection_changed(
     system: &Connection,
     iface: &InterfaceRef<SystemService>,
@@ -177,7 +186,32 @@ async fn connection_changed(
     }
 }
 
-async fn set_battery(iface: &InterfaceRef<SystemService>, path: &str, percent: u8) {
+/// A connected device's battery, as BlueZ reports it, with an alert as it goes under a low level.
+async fn set_battery(
+    iface: &InterfaceRef<SystemService>,
+    lows: &mut DeviceBatteries,
+    path: &str,
+    percent: u8,
+) {
+    let known = iface
+        .get()
+        .await
+        .state
+        .bluetooth
+        .iter()
+        .find(|d| d.path == path)
+        .cloned();
+    // Its first reading (or one before it is announced) is no way down.
+    let event = known.and_then(|device| {
+        let before = device.battery?;
+        lows.reading(path, before, percent)?;
+        Some(SystemEvent::BluetoothLow {
+            device: BluetoothDevice {
+                battery: Some(percent),
+                ..device
+            },
+        })
+    });
     publish(
         iface,
         |state| {
@@ -185,11 +219,12 @@ async fn set_battery(iface: &InterfaceRef<SystemService>, path: &str, percent: u
                 device.battery = Some(percent);
             }
         },
-        None,
+        event,
     )
     .await;
 }
 
+/// A device's name and icon, and its battery if it reports one.
 async fn read_device(system: &Connection, path: &ObjectPath<'_>) -> zbus::Result<BluetoothDevice> {
     let properties = PropertiesProxy::builder(system)
         .destination(BLUEZ)?

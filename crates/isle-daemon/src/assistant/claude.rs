@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! Claude Code (`claude`) in stream-json print mode, with the user's own sign-in: one process per
 //! conversation, kept to the web tools, without the user's settings, hooks, memory or MCP servers.
@@ -23,6 +24,7 @@ use super::child::{self, Events, Group};
 const TOOLS: &str = "WebSearch,WebFetch";
 const STDERR_LINES: usize = 20;
 
+/// A running `claude`, with the last lines of its stderr kept to explain a failure.
 pub struct Claude {
     _child: Group,
     stdin: ChildStdin,
@@ -105,6 +107,7 @@ impl Claude {
         })
     }
 
+    /// One turn; an error carries what Claude Code printed to stderr meanwhile.
     pub async fn ask(
         &mut self,
         prompt: &str,
@@ -122,6 +125,7 @@ impl Claude {
         })
     }
 
+    /// Sends the prompt and reads events until the result, passing on steps and the draft as they come.
     async fn turn(
         &mut self,
         prompt: &str,
@@ -207,6 +211,7 @@ fn steps(event: &Value) -> Vec<String> {
         .collect()
 }
 
+/// The answer from the `result` event: its structured output, else its plain text.
 fn parse_result(event: &Value) -> anyhow::Result<Answer> {
     if event["is_error"].as_bool() == Some(true) || event["subtype"] != "success" {
         let reason = event["result"]
@@ -267,7 +272,12 @@ const SIGN_IN_KEYS: &[&str] = &[
 
 /// Whether Claude Code has a way to sign in: its own sign-in, an API key, or a cloud it is set to use.
 pub fn signed_in() -> bool {
-    let dir = config_dir();
+    config_dir().join(".credentials.json").exists() || uses_api_key()
+}
+
+/// Whether it signs in with an API key or a cloud (Bedrock, Vertex), from isled's environment or the
+/// user's settings, rather than with a Claude plan.
+pub fn uses_api_key() -> bool {
     let env_says = [
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_AUTH_TOKEN",
@@ -286,7 +296,15 @@ pub fn signed_in() -> bool {
         .iter()
         .any(|key| json.contains(key))
     });
-    dir.join(".credentials.json").exists() || env_says || settings_say
+    env_says || settings_say
+}
+
+/// Claude Code's own state (the account, its plan): `.claude.json` in `$CLAUDE_CONFIG_DIR`, else in home.
+pub fn state_file() -> PathBuf {
+    std::env::var_os("CLAUDE_CONFIG_DIR")
+        .filter(|dir| !dir.is_empty())
+        .map_or_else(|| dirs::home_dir().unwrap_or_default(), PathBuf::from)
+        .join(".claude.json")
 }
 
 /// Where Claude Code keeps the conversations it had in Isle's workspace (and only those).

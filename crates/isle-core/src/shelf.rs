@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! The file shelf: files parked on the island to drag later; it never copies or moves them.
 
@@ -8,6 +9,7 @@ use serde::{Deserialize, Serialize};
 /// one must be removed first.
 pub const CAPACITY: usize = 6;
 
+/// One file parked on the shelf.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShelfItem {
     /// `file://` URI of the item.
@@ -17,12 +19,14 @@ pub struct ShelfItem {
     pub added_at_ms: i64,
 }
 
+/// Files parked on the island, at most [`CAPACITY`].
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Shelf {
     items: Vec<ShelfItem>,
 }
 
 impl Shelf {
+    /// The parked files, newest first.
     pub fn items(&self) -> &[ShelfItem] {
         &self.items
     }
@@ -39,17 +43,19 @@ impl Shelf {
         true
     }
 
+    /// Takes the file with `uri` off the shelf; true if it was there.
     pub fn remove(&mut self, uri: &str) -> bool {
         let before = self.items.len();
         self.items.retain(|item| item.uri != uri);
         self.items.len() != before
     }
 
+    /// Empties the shelf; the files themselves stay where they are.
     pub fn clear(&mut self) {
         self.items.clear();
     }
 
-    /// Keeps only the items for which `exists` returns true.
+    /// Keeps only the items for which `exists` returns true; true if any were dropped.
     pub fn retain_existing(&mut self, exists: impl Fn(&ShelfItem) -> bool) -> bool {
         let before = self.items.len();
         self.items.retain(exists);

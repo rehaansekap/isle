@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 use std::collections::HashMap;
 
@@ -16,16 +17,19 @@ const INTERFACE: &str = "org.freedesktop.NetworkManager";
 /// NetworkManager's NM_STATE_CONNECTED_SITE; anything above means connected.
 const STATE_CONNECTED_SITE: u32 = 60;
 
+/// One active NetworkManager connection, read for its name.
 #[proxy(
     interface = "org.freedesktop.NetworkManager.Connection.Active",
     default_service = "org.freedesktop.NetworkManager",
     gen_blocking = false
 )]
 trait ActiveConnection {
+    /// The connection's name, e.g. the Wi-Fi network.
     #[zbus(property)]
     fn id(&self) -> zbus::Result<String>;
 }
 
+/// Publishes the network state, with an alert when it connects, drops or switches.
 pub async fn watch(system: Connection, iface: InterfaceRef<SystemService>) -> anyhow::Result<()> {
     let properties = PropertiesProxy::builder(&system)
         .destination(DESTINATION)?

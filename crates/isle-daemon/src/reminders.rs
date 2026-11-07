@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 use isle_core::reminders::Reminders;
 use zbus::object_server::SignalEmitter;
@@ -10,18 +11,21 @@ use crate::store::Store;
 /// The longest delay a reminder takes: a week.
 const MAX_DELAY_MS: u64 = 7 * 24 * 60 * 60 * 1000;
 
+/// The reminders D-Bus service, kept on disk so they survive a restart.
 pub struct RemindersService {
     reminders: Reminders,
     store: Store<Reminders>,
 }
 
 impl RemindersService {
+    /// Reads the saved reminders, or starts with none.
     pub fn load() -> Self {
         let mut store = Store::new("reminders");
         let reminders = store.load();
         Self { reminders, store }
     }
 
+    /// The current reminders, for the daemon's own checks.
     pub fn reminders(&self) -> &Reminders {
         &self.reminders
     }

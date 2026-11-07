@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
-// The call going on, with FaceTime-like controls: a live preview of the call's window (you and
+// The call going on, with round controls: a live preview of the call's window (you and
 // whoever you call), its app and duration, mute, and a way back. It only has a tab during a call.
 
 import Cairo from 'cairo';
@@ -11,7 +12,10 @@ import Pango from 'gi://Pango';
 import St from 'gi://St';
 
 import {VERTICAL, onUiScale, px, uiScale} from '../compat.js';
+import {PAGE_HEIGHT} from '../expanded.js';
 import * as Format from '../format.js';
+import {roundCorners} from '../glass.js';
+import * as Theme from '../theme.js';
 import {icon, label, setEnabled} from '../widgets.js';
 import {Page} from './page.js';
 
@@ -38,6 +42,7 @@ function roundedRect(cr, x, y, width, height, radius) {
 // and the copy only exists while it is shown. Without one it shows the app's icon.
 const WindowPreview = GObject.registerClass(
 class WindowPreview extends St.Widget {
+    /** Builds the stacked layers: copy, icon placeholder, corners and hover mark. */
     _init() {
         super._init({
             style_class: 'isle-call-preview',
@@ -47,6 +52,8 @@ class WindowPreview extends St.Widget {
             x_expand: false,
             y_expand: false,
         });
+        /** How much larger than its usual size it is drawn (Settings → Size), and its width in CSS pixels. */
+        this._factor = 1;
         this._width = PLACEHOLDER_WIDTH;
         this._window = null;
         this._actor = null;
@@ -66,7 +73,7 @@ class WindowPreview extends St.Widget {
         this._hint = label('', 'isle-call-hint', {x_align: Clutter.ActorAlign.CENTER});
         this._placeholder.add_child(this._appIcon);
         this._placeholder.add_child(this._hint);
-        // Rounds the corners by painting them in the island's black, with a hairline edge.
+        // Rounds the corners by painting them in the island's colour, with a hairline edge.
         this._corners = new St.DrawingArea({x_expand: true, y_expand: true});
         this._corners.connect('repaint', area => this._repaintCorners(area));
         this._hover = new St.Bin({
@@ -80,10 +87,17 @@ class WindowPreview extends St.Widget {
             this.add_child(child);
         this.connect('destroy', () => this._detach());
         onUiScale(this, scale => {
-            this.set_size(this._width * scale, PREVIEW_HEIGHT * scale);
+            this.set_size(this._width * scale, this._height * scale);
             if (this._clone)
                 this._layout();
+            this.syncTheme();
         });
+        this.syncTheme();
+    }
+
+    /** On glass the corners are cut away, as the glass round them varies; on black they are painted over. */
+    syncTheme() {
+        roundCorners(this, Theme.translucent() ? PREVIEW_RADIUS * uiScale() : null);
     }
 
     /** Shows `window` live, or else `gicon` with an optional `hint`. */
@@ -100,7 +114,25 @@ class WindowPreview extends St.Widget {
         this._hint.text = hint ?? '';
         this._hint.visible = Boolean(hint);
         if (!live)
-            this._setWidth(PLACEHOLDER_WIDTH);
+            this._setWidth(Math.round(PLACEHOLDER_WIDTH * this._factor));
+    }
+
+    /** Its height in CSS pixels. */
+    get _height() {
+        return Math.round(PREVIEW_HEIGHT * this._factor);
+    }
+
+    /** Drawn `factor` times its usual size (the page taller, Settings → Size). */
+    set factor(factor) {
+        if (factor === this._factor)
+            return;
+        this._factor = factor;
+        this.height = px(this._height);
+        if (this._clone)
+            this._layout();
+        else
+            this._setWidth(Math.round(PLACEHOLDER_WIDTH * factor));
+        this.syncTheme();
     }
 
     /** Shows the "go to the call" mark while the pointer is over it. */
@@ -108,6 +140,7 @@ class WindowPreview extends St.Widget {
         this._hover.ease({opacity: hovered ? 255 : 0, duration: 150});
     }
 
+    /** Starts the live copy and follows the window as it moves or resizes. */
     _attach(window) {
         const actor = window.get_compositor_private();
         if (!actor)
@@ -122,6 +155,7 @@ class WindowPreview extends St.Widget {
         this._layout();
     }
 
+    /** Drops the copy and every signal on the window. */
     _detach() {
         this._windowIds.forEach(id => this._window.disconnect(id));
         this._windowIds = [];
@@ -140,11 +174,12 @@ class WindowPreview extends St.Widget {
         const buffer = this._window.get_buffer_rect();
         if (frame.width <= 0 || frame.height <= 0)
             return;
-        const width = Math.min(PREVIEW_MAX_WIDTH, Math.max(PREVIEW_MIN_WIDTH,
-            Math.round(PREVIEW_HEIGHT * frame.width / frame.height)));
+        const factor = this._factor;
+        const width = Math.min(Math.round(PREVIEW_MAX_WIDTH * factor), Math.max(Math.round(PREVIEW_MIN_WIDTH * factor),
+            Math.round(this._height * frame.width / frame.height)));
         this._setWidth(width);
         // On the stage, in its pixels, as the window's frame is.
-        const [stageWidth, stageHeight] = [px(width), px(PREVIEW_HEIGHT)];
+        const [stageWidth, stageHeight] = [px(width), px(this._height)];
         const scale = Math.max(stageWidth / frame.width, stageHeight / frame.height);
         this._clone.set_size(Math.round(buffer.width * scale), Math.round(buffer.height * scale));
         this._clone.set_position(
@@ -160,16 +195,19 @@ class WindowPreview extends St.Widget {
         this.width = px(width);
     }
 
+    /** The island's colour outside the rounded shape (not on glass: see `syncTheme`), then a faint white edge. */
     _repaintCorners(area) {
         const cr = area.get_context();
         const [width, height] = area.get_surface_size();
         const scale = uiScale();
         const radius = PREVIEW_RADIUS * scale, edge = scale / 2;
-        cr.rectangle(0, 0, width, height);
-        roundedRect(cr, 0, 0, width, height, radius);
-        cr.setFillRule(Cairo.FillRule.EVEN_ODD);
-        cr.setSourceRGBA(0, 0, 0, 1);
-        cr.fill();
+        if (!Theme.translucent()) {
+            cr.rectangle(0, 0, width, height);
+            roundedRect(cr, 0, 0, width, height, radius);
+            cr.setFillRule(Cairo.FillRule.EVEN_ODD);
+            cr.setSourceRGBA(...Theme.solid(), 1);
+            cr.fill();
+        }
         roundedRect(cr, edge, edge, width - 2 * edge, height - 2 * edge, radius - edge);
         cr.setSourceRGBA(1, 1, 1, 0.1);
         cr.setLineWidth(scale);
@@ -178,8 +216,10 @@ class WindowPreview extends St.Widget {
     }
 });
 
+/** The call page: preview on the left, app, duration and controls on the right. */
 export const CallPage = GObject.registerClass(
 class CallPage extends Page {
+    /** `call` is the call tracker; `privacy` says when the screen is shared or recorded. */
     _init(daemon, call, privacy, settings, {height}) {
         super._init(daemon, {
             style_class: 'isle-page isle-call',
@@ -239,15 +279,17 @@ class CallPage extends Page {
         this.connect('destroy', () => this._onDestroy());
     }
 
+    /** Only during a call. */
     get available() {
         return this._call.active;
     }
 
+    /** During a call, a page worth opening on. */
     get relevant() {
         return this._call.active;
     }
 
-    /** A round button with its caption below, like FaceTime's. */
+    /** A round button with its caption below. */
     _control(iconName, caption, onClick) {
         const button = new St.Button({
             style_class: 'isle-call-control',
@@ -264,11 +306,13 @@ class CallPage extends Page {
         return {box, button, text};
     }
 
+    /** Raises the call's window and closes the island. */
     _open() {
         this._call.raise();
         this.emit('request-close');
     }
 
+    /** Redraws from the call's state; tells the island when the tab comes or goes. */
     _update() {
         const call = this._call;
         if (call.active !== this._available) {
@@ -321,15 +365,23 @@ class CallPage extends Page {
             this.later('tick', 1000 - (elapsedMs % 1000) + 10, () => this._tick());
     }
 
+    /** Settings → Size: the window's copy as much larger as the page is taller. */
+    onPageHeight(height) {
+        this._preview.factor = height / PAGE_HEIGHT;
+    }
+
+    /** Starts the preview and the clock. */
     onActivate() {
         this._update();
     }
 
+    /** Swaps the live copy for the icon. */
     onDeactivate() {
         // The live copy only exists while it is shown.
         this._preview.update({gicon: this._appIcon.gicon});
     }
 
+    /** Lets go of the call and settings signals. */
     _onDestroy() {
         this._call.disconnect(this._callChanged);
         this._settings.disconnect(this._settingsChanged);

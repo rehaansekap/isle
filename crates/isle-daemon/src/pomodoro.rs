@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 use std::sync::Arc;
 
@@ -21,6 +22,7 @@ struct State {
     today_focus_ms: i64,
 }
 
+/// The Pomodoro1 D-Bus object: the timer, its settings and the focus figures, each saved to disk.
 pub struct PomodoroService {
     timer: Pomodoro,
     store: Store<PomodoroConfig>,
@@ -32,6 +34,7 @@ pub struct PomodoroService {
 }
 
 impl PomodoroService {
+    /// Restores the settings, the phase in progress and the figures from disk.
     pub fn load() -> Self {
         let mut store = Store::new("pomodoro");
         let mut timer_store = Store::new("pomodoro-timer");
@@ -68,6 +71,7 @@ impl PomodoroService {
         Ok(self.changed(&emitter).await?)
     }
 
+    /// Pauses the running phase.
     async fn pause(
         &mut self,
         #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,

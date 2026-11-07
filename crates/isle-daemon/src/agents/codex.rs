@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
-//! Codex: hooks in its hooks.json running `isled --agent-hook codex`: `PermissionRequest` (its approval,
-//! answered from the island) and `Stop` (done). A Codex older than hooks (0.124) gets
-//! `notify = ["<isled>", "--agent-hook", "codex"]` in its config.toml instead, for done alone, and only
-//! when no other program gets Codex's notifications.
+//! Codex: `isled --agent-hook codex` hooks in hooks.json for approvals and done. A Codex before 0.124 gets
+//! a `notify` in config.toml instead (done alone), and only when no other program has it.
 
 use std::path::{Path, PathBuf};
 
@@ -84,17 +83,20 @@ pub fn config_path() -> PathBuf {
         .join("config.toml")
 }
 
+/// The strings of a TOML array, such as `notify`'s command line.
 fn words(item: &Item) -> Vec<&str> {
     let array = item.as_array().into_iter().flatten();
     array.filter_map(|word| word.as_str()).collect()
 }
 
+/// Whether a `notify` runs some isled, this one or another install's.
 fn is_ours(item: &Item) -> bool {
     words(item)
         .windows(2)
         .any(|pair| pair == ["--agent-hook", "codex"])
 }
 
+/// Isle's `notify` command line.
 fn notify(isled: &str) -> Array {
     Array::from_iter([isled, "--agent-hook", "codex"])
 }
@@ -141,12 +143,14 @@ fn remove_notify(path: &Path) -> anyhow::Result<bool> {
     Ok(true)
 }
 
+/// A missing config reads as empty; a broken one is left for the user to fix.
 fn parse(path: &Path, text: Option<&str>) -> anyhow::Result<DocumentMut> {
     text.unwrap_or_default()
         .parse()
         .with_context(|| format!("{} is not valid TOML; fix it first", path.display()))
 }
 
+/// Writes the config whole, keeping the user's original as a backup the first time.
 fn save(path: &Path, config: &DocumentMut) -> anyhow::Result<()> {
     file::backup_once(path).with_context(|| format!("could not back up {}", path.display()))?;
     file::write_atomic(path, &config.to_string())

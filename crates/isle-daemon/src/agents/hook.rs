@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
-//! `isled --agent-hook claude|codex`: run by the AI itself, it turns what the AI hands its hooks into an
-//! event for the running isled, or (a permission) asks the island and prints the user's answer for the AI.
-//! It never fails: when there is no answer (no isled, no reply in time) it prints nothing, and the AI asks
-//! in its own terminal as it would without Isle.
+//! `isled --agent-hook claude|codex`: run by the AI, it passes its hook events to isled and asks the island
+//! about permissions. With no answer (no isled, no reply in time) it prints nothing: the AI asks in its terminal.
 
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -31,7 +30,8 @@ const TRANSCRIPT_TAIL: u64 = 1024 * 1024;
 
 /// `args` are what follows `--agent-hook`: the AI, then (Codex) its JSON as the last.
 pub async fn run(args: &[String]) {
-    let ai = args.first().map(String::as_str);
+    // Grok runs Claude's hooks itself, so a claude hook whose parent is grok is Grok.
+    let ai = ai_of(args.first().map(String::as_str), &parent_names());
     // Codex's old `notify` passes its JSON as the last argument; hooks pass theirs on stdin.
     let payload: Option<Value> = match args.get(1..).and_then(<[String]>::last) {
         Some(json) if ai == Some("codex") => serde_json::from_str(json).ok(),
@@ -56,12 +56,12 @@ pub async fn run(args: &[String]) {
                     println!("{output}");
                 }
             }
-            () = answered_elsewhere(&payload), if ai == Some("claude") => {}
+            () = answered_elsewhere(&payload), if matches!(ai, Some("claude" | "grok")) => {}
         }
         return;
     }
     let event = match ai {
-        Some("claude") => from_claude(&payload),
+        Some("claude" | "grok") => from_named(ai.unwrap_or("claude"), &payload),
         Some("codex") => from_codex(&payload).or_else(|| from_codex_hook(&payload)),
         _ => None,
     };
@@ -72,7 +72,7 @@ pub async fn run(args: &[String]) {
 
 /// What the island shows of a permission: the tool, and what it would run or touch.
 fn request(ai: &str, payload: &Value) -> Option<Request> {
-    if !matches!(ai, "claude" | "codex") {
+    if !matches!(ai, "claude" | "codex" | "grok") {
         return None;
     }
     let text = |key: &str| payload[key].as_str().unwrap_or_default();
@@ -101,7 +101,8 @@ fn request(ai: &str, payload: &Value) -> Option<Request> {
         session: text("session_id").into(),
         tool: text("tool_name").into(),
         input: line,
-        always: !rule_suggestions(payload).is_empty(),
+        // Codex keeps no rule from its hook's answer: Always would only allow it this once.
+        always: matches!(ai, "claude" | "grok") && !rule_suggestions(payload).is_empty(),
         ..Request::default()
     })
 }
@@ -143,8 +144,8 @@ async fn decide(request: &Request) -> zbus::Result<String> {
         .ok_or_else(|| zbus::Error::Failure("no answer".into()))
 }
 
-/// Resolves once the permission was answered in Claude Code's own terminal (it asks there at the same
-/// time; Codex waits for the hook): its transcript has the result of this tool call. Never, when that cannot be told (no transcript, the call not found in it).
+/// Resolves once the permission was answered in Claude Code's own terminal: the transcript has the call's
+/// result. Codex waits for the hook instead. Never resolves without a transcript or the call in it.
 async fn answered_elsewhere(payload: &Value) {
     let path = payload["transcript_path"].as_str().map(PathBuf::from);
     let mut found = None;
@@ -252,7 +253,7 @@ fn rule_suggestions(payload: &Value) -> Vec<Value> {
 fn decision(ai: &str, answer: &str, payload: &Value) -> Option<String> {
     let decision = match answer {
         "allow" => serde_json::json!({"behavior": "allow"}),
-        "always" if ai == "claude" => {
+        "always" if matches!(ai, "claude" | "grok") => {
             serde_json::json!({"behavior": "allow", "updatedPermissions": rule_suggestions(payload)})
         }
         "always" => serde_json::json!({"behavior": "allow"}),
@@ -274,13 +275,8 @@ fn from_codex_hook(payload: &Value) -> Option<Event> {
         .into_iter()
         .find(|id| !id.is_empty())
         .unwrap_or_default();
-    event(
-        "codex",
-        "done",
-        text("cwd"),
-        first_line(text("last_assistant_message")),
-        session,
-    )
+    let message = said(text("last_assistant_message"));
+    event("codex", "done", text("cwd"), &message, session)
 }
 
 /// Never starts isled: when it is not running there is no island to tell.
@@ -301,21 +297,28 @@ async fn send(event: &Event) -> zbus::Result<()> {
 }
 
 /// Claude Code's `Notification` (needs a permission, or waits for the user) and `Stop` (done).
+#[cfg(test)]
 fn from_claude(payload: &Value) -> Option<Event> {
+    from_named("claude", payload)
+}
+
+/// As `from_claude`, named `provider` ("claude", or "grok" when Grok ran the hook).
+fn from_named(provider: &str, payload: &Value) -> Option<Event> {
     let text = |key: &str| payload[key].as_str().unwrap_or_default();
     let (kind, message) = match text("hook_event_name") {
         "Notification" => {
             // A permission too: the island skips it when it asked for that session already (see
             // `decide`), and shows it when it could not (a long command, too many waiting).
             let kind = notification_kind(text("notification_type"), text("message"))?;
-            (kind, text("message"))
+            (kind, text("message").to_owned())
         }
-        "Stop" => ("done", first_line(text("last_assistant_message"))),
+        "Stop" => ("done", said(text("last_assistant_message"))),
         _ => return None,
     };
-    event("claude", kind, text("cwd"), message, text("session_id"))
+    event(provider, kind, text("cwd"), &message, text("session_id"))
 }
 
+/// "permission" or "waiting" for a Claude Code notification; `None` for one the island ignores.
 fn notification_kind(kind: &str, message: &str) -> Option<&'static str> {
     match kind {
         "permission_prompt" => Some("permission"),
@@ -338,10 +341,72 @@ fn from_codex(payload: &Value) -> Option<Event> {
         .into_iter()
         .find(|id| !id.is_empty())
         .unwrap_or_default();
-    let message = first_line(text("last-assistant-message"));
-    event("codex", "done", text("cwd"), message, session)
+    let message = said(text("last-assistant-message"));
+    event("codex", "done", text("cwd"), &message, session)
 }
 
+/// What was said: the `say` of an answer written as the schema's JSON, else its first line.
+fn said(text: &str) -> String {
+    let trimmed = text.trim();
+    if let Some(say) = spoken(trimmed) {
+        return first_line(&say).to_owned();
+    }
+    first_line(trimmed).to_owned()
+}
+
+/// The `say` of `{"say":"…"}`, also inside a ```json fence.
+fn spoken(text: &str) -> Option<String> {
+    let fenced = text
+        .strip_prefix("```json")
+        .or_else(|| text.strip_prefix("```"))
+        .and_then(|rest| rest.trim_end().strip_suffix("```"))
+        .map(str::trim);
+    let value: Value = serde_json::from_str(fenced.unwrap_or(text)).ok()?;
+    let say = value.get("say")?.as_str()?.trim();
+    (!say.is_empty()).then(|| say.to_owned())
+}
+
+/// The CLI a hook names, unless Claude's hook was started by Grok (`parents` are process names, nearest first).
+fn ai_of(named: Option<&str>, parents: &[String]) -> Option<&'static str> {
+    match named {
+        Some("claude") if parents.iter().any(|name| is_grok(name)) => Some("grok"),
+        Some("claude") => Some("claude"),
+        Some("codex") => Some("codex"),
+        Some("grok") => Some("grok"),
+        _ => None,
+    }
+}
+
+/// `grok`, or a versioned `grok-…` binary, by path or bare name.
+fn is_grok(name: &str) -> bool {
+    let name = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    name == "grok" || name.starts_with("grok-")
+}
+
+/// Names of this hook's parent processes, nearest first.
+fn parent_names() -> Vec<String> {
+    ancestors().into_iter().filter_map(process_name).collect()
+}
+
+/// `comm`, else the executable's file name when that is blank.
+fn process_name(pid: u32) -> Option<String> {
+    let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok();
+    let comm = comm
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty());
+    if let Some(name) = comm {
+        return Some(name.to_owned());
+    }
+    std::fs::read_link(format!("/proc/{pid}/exe"))
+        .ok()
+        .and_then(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+}
+
+/// The first line with text on it, trimmed.
 fn first_line(text: &str) -> &str {
     text.lines()
         .map(str::trim)
@@ -525,6 +590,31 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(summed_up.message, "Fixed the build.");
+        // The voice assistant's answer is the schema's JSON; the island shows what it said.
+        let spoken = from_named(
+            "grok",
+            &json!({
+                "cwd": "/home/a/.local/share/isle/assistant",
+                "hook_event_name": "Stop",
+                "last_assistant_message": "{\"say\":\"Something.\"}"
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            (
+                spoken.provider.as_str(),
+                spoken.message.as_str(),
+                spoken.project.as_str()
+            ),
+            ("grok", "Something.", "assistant")
+        );
+        let parents = ["sh".to_owned(), "grok".to_owned()];
+        assert_eq!(ai_of(Some("claude"), &parents), Some("grok"));
+        assert_eq!(
+            ai_of(Some("claude"), &["claude".to_owned()]),
+            Some("claude")
+        );
+        assert_eq!(ai_of(Some("codex"), &parents), Some("codex"));
         assert!(from_claude(&json!({"hook_event_name": "PreToolUse"})).is_none());
         assert!(from_claude(&json!([1, 2])).is_none());
     }
@@ -590,6 +680,13 @@ mod tests {
         let asked = request("codex", &edit).unwrap();
         assert!(!asked.always && asked.input == "*** Begin Patch");
         assert!(request("agy", &edit).is_none());
+        // Always only where the AI keeps the rule: Codex with suggestions, Grok running Claude's hooks.
+        assert!(!request("codex", &claude).unwrap().always);
+        assert!(request("grok", &claude).unwrap().always);
+        // The command stays as it runs, its spaces too.
+        let mut spaced = claude.clone();
+        spaced["tool_input"]["command"] = json!("grep \"a  b\" f");
+        assert_eq!(request("claude", &spaced).unwrap().input, "grep \"a  b\" f");
     }
 
     #[test]

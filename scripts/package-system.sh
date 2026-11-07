@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Makes system-wide packages from a release tarball (scripts/package.sh's output), with the same programs:
-#   dist/isle_<version>_amd64.deb and dist/isle-<version>-1.x86_64.rpm
-# Usage: scripts/package-system.sh dist/isle-<version>-x86_64-linux.tar.gz [deb] [rpm]   (default: both)
-# The .deb needs dpkg-deb and dpkg-shlibdeps (dpkg-dev); the .rpm needs rpmbuild (rpm) and file.
+# Copyright (C) 2026 zickrian
+# Makes system-wide .deb and .rpm packages in dist/ from a release tarball (scripts/package.sh's output).
+# Usage: scripts/package-system.sh <tarball> [deb] [rpm]; the .deb needs dpkg-dev, the .rpm rpmbuild and file.
 set -euo pipefail
 
 [ -f "${1:-}" ] || { echo "Usage: $0 <isle-…-linux.tar.gz> [deb] [rpm]" >&2; exit 2; }
@@ -55,6 +54,7 @@ stage() {
     install -Dm644 -t "$root/usr/share/doc/isle" "$SRC/README.md" "$SRC/CHANGELOG.md"
 }
 
+# The .deb, its dependencies read from the libraries the programs link.
 build_deb() {
     local root="$WORK/deb" depends
     stage "$root" /usr/share/fonts/truetype/isle
@@ -95,7 +95,7 @@ Homepage: https://github.com/zickrian/isle
 Description: $SUMMARY
  Isle turns the middle of the GNOME Shell top bar into a notch-style island: music
  with synced lyrics, calls, a focus timer, reminders, a calendar, a file shelf,
- charging and system alerts, and an optional voice assistant.
+ app usage, charging and system alerts, and an optional voice assistant.
  .
  Each user logs out and back in, then turns the extension on once: gnome-extensions enable $UUID
 EOF
@@ -103,6 +103,7 @@ EOF
     echo "dist/isle_${VERSION}_amd64.deb"
 }
 
+# The .rpm, from a spec wrapped around the staged files.
 build_rpm() {
     local stage="$WORK/rpm-root" top="$WORK/rpmbuild"
     stage "$stage" /usr/share/fonts/isle
@@ -126,7 +127,7 @@ Recommends: vulkan-loader
 %description
 Isle turns the middle of the GNOME Shell top bar into a notch-style island: music
 with synced lyrics, calls, a focus timer, reminders, a calendar, a file shelf,
-charging and system alerts, and an optional voice assistant.
+app usage, charging and system alerts, and an optional voice assistant.
 
 Each user logs out and back in, then turns the extension on once: gnome-extensions enable $UUID
 

@@ -15,15 +15,74 @@
       <summary>Pill style on glass top bar</summary>
       <description>Enclose workspace indicator, grouped tray apps, and system icons in solid black pills when top bar is glass.</description>
     </key>
+    <key name="island-theme" type="s">
+      <choices>
+        <choice value="black"/>
+        <choice value="glass"/>
+      </choices>
+      <default>'black'</default>
+      <summary>The island's look</summary>
+      <description>black: Isle's own black island. glass: clear glass over what is behind it, blurred, its edge catching the light.</description>
+    </key>
+    <key name="open-size" type="s">
+      <choices>
+        <choice value="standard"/>
+        <choice value="large"/>
+      </choices>
+      <default>'standard'</default>
+      <summary>How large the open island is</summary>
+      <description>"standard": 600 px wide, its pages 150 px tall. "large": 720 px wide and every page 210 px tall, each laid out for the room (a larger cover, timer ring and month, more rows and cards); the type keeps its size.</description>
+    </key>
+    <key name="clock-date" type="b">
+      <default>false</default>
+      <summary>The day beside the closed island's clock</summary>
+      <description>"Fri 6" before the time while the island shows the clock alone.</description>
+    </key>
+    <key name="clock-format" type="s">
+      <choices>
+        <choice value="system"/>
+        <choice value="24h"/>
+        <choice value="12h"/>
+      </choices>
+      <default>'system'</default>
+      <summary>The island's clock</summary>
+      <description>system: as GNOME's own clock is set. 24h: 20:40. 12h: 8:40 PM, with AM or PM. Every time Isle shows follows it.</description>
+    </key>
+    <key name="glass-tint" type="i">
+      <range min="0" max="100"/>
+      <default>0</default>
+      <summary>Glass tint</summary>
+      <description>With the Glass look: how dark the glass is, from 0 (clear, what is behind shows through) to 100 (dark frosted glass). Still blurred either way.</description>
+    </key>
+    <key name="top-bar-opacity" type="i">
+      <range min="0" max="100"/>
+      <default>0</default>
+      <summary>Top bar opacity</summary>
+      <description>How black the top bar beside the island is, in %: 0 is glass, 100 is black and the island blends into it. Unset, top-bar-style decides.</description>
+    </key>
+    <key name="top-bar-black-with-windows" type="b">
+      <default>false</default>
+      <summary>Black top bar beside windows</summary>
+      <description>With a see-through or grey top bar: while an app's window reaches the bar (maximized, tiled to the top or moved up there), the bar turns black, so the wallpaper doesn't show above it. The island stays where it is.</description>
+    </key>
     <key name="compact-top-bar" type="b">
       <default>true</default>
       <summary>Compact top bar</summary>
-      <description>Make the top bar slimmer, so it frames the island like a thin bezel.</description>
+      <description>Smaller text and spacing in the top bar; with the island below the bar, a slimmer bar too.</description>
+    </key>
+    <key name="island-shape" type="s">
+      <choices>
+        <choice value="notch"/>
+        <choice value="pill"/>
+      </choices>
+      <default>'notch'</default>
+      <summary>The island's shape</summary>
+      <description>"notch": joined to the top of the screen, its shoulders flaring into it. "pill": floating free, round all over, a little below the top: centred in the top bar with the closed island inside it, else just below the bar, or 8 px from the top of a display without one.</description>
     </key>
     <key name="island-in-top-bar" type="b">
       <default>true</default>
       <summary>Closed island inside the top bar</summary>
-      <description>Like a notch: the top bar is as tall as the closed island, so it never covers windows. Alerts and the open island still hang below it for a moment.</description>
+      <description>Like a notch: the top bar is as tall as the closed island (plus the space below it), so it never covers windows. Alerts and the open island still hang below it for a moment.</description>
     </key>
     <key name="dim-when-top-bar-hidden" type="b">
       <default>true</default>
@@ -60,6 +119,11 @@
       <default>''</default>
       <summary>The newest version already announced, so each is said once</summary>
     </key>
+    <key name="prefs-page" type="s">
+      <default>''</default>
+      <summary>The Settings page to open on next, once</summary>
+      <description>The island's Update button sets it to show About, where the update is.</description>
+    </key>
     <key name="open-on" type="s">
       <choices>
         <choice value="hover"/>
@@ -80,14 +144,36 @@
       <summary>How long to hover on a notification alert before opening the island, in milliseconds</summary>
       <description>When a notification appears, clicking before this delay opens its app; hovering for this duration opens the dynamic island.</description>
     </key>
+    <key name="auto-hide" type="s">
+      <choices>
+        <choice value="off"/>
+        <choice value="always"/>
+        <choice value="top-bar"/>
+        <choice value="windows"/>
+      </choices>
+      <default>'off'</default>
+      <summary>Auto-hide the closed island</summary>
+      <description>off: always shown. always: hides once the pointer has been off it a while. top-bar: hides and comes back with a top bar another extension hides. windows: hides while an app's window reaches the top (maximized, tiled or moved up there). Hidden, alerts, the open island and the assistant still show; pointing at its place in the top bar brings it back.</description>
+    </key>
+    <key name="auto-hide-delay" type="i">
+      <range min="1" max="60"/>
+      <default>3</default>
+      <summary>How long the closed island waits before hiding, in seconds</summary>
+    </key>
+    <key name="alerts-over-fullscreen" type="b">
+      <default>false</default>
+      <summary>Alerts over full-screen apps</summary>
+      <description>When on, alerts (notifications, calls, timers…) show over a full-screen app (a video, a game), the island hidden again between them. Off, they wait until the app leaves full screen, as GNOME's own.</description>
+    </key>
     <key name="island-monitor" type="s">
       <choices>
         <choice value="primary"/>
         <choice value="active"/>
+        <choice value="all"/>
       </choices>
       <default>'primary'</default>
       <summary>Display the island is on</summary>
-      <description>"primary": the main display, in its top bar. "active": the display of the window in use; on a display without a top bar it hangs from the top edge.</description>
+      <description>"primary": the main display, in its top bar. "active": the display of the window in use; on a display without a top bar it hangs from the top edge. "all": every display, the island itself on the one in use; the others show the closed island and its alerts, and pointing at one brings the island there.</description>
     </key>
     <key name="notch-depth" type="i">
       <range min="24" max="40"/>
@@ -100,6 +186,11 @@
       <default>320</default>
       <summary>Maximum open island height</summary>
       <description>Maximum height of the dynamic island when open, in pixels. The island hugs its content up to this limit, becoming scrollable if the content is taller.</description>
+    </key>
+    <key name="notch-gap" type="b">
+      <default>true</default>
+      <summary>Space below the island</summary>
+      <description>With the closed island inside the top bar: the top bar is a little taller than the island, so the island stops just short of the windows below. Off, they are the same height. It shows on a see-through or grey bar.</description>
     </key>
     <key name="replace-osd" type="b">
       <default>true</default>
@@ -122,6 +213,11 @@
       <default>true</default>
       <summary>Show Bluetooth alerts</summary>
     </key>
+    <key name="alert-bluetooth-battery" type="b">
+      <default>false</default>
+      <summary>Alert when a Bluetooth device's battery is low</summary>
+      <description>At 20, 10 and 5 percent, once per level on the way down, for each connected device that reports its battery; again once it has charged more than 5 points above that level. Like the laptop's low battery, it shows during Do Not Disturb. Off until you turn it on.</description>
+    </key>
     <key name="alert-caps-lock" type="b">
       <default>true</default>
       <summary>Show Caps Lock alerts</summary>
@@ -135,6 +231,36 @@
       <range min="1" max="60"/>
       <default>5</default>
       <summary>Minutes before an event its alert shows</summary>
+    </key>
+    <key name="event-calendar" type="s">
+      <default>''</default>
+      <summary>Where new events go</summary>
+      <description>The desktop calendar (an Evolution Data Server source uid, such as an Online Accounts calendar) the Calendar page and the assistant add events to; "isle" for Isle's own calendar on this computer; empty for the first account's calendar, or Isle's own without one.</description>
+    </key>
+    <key name="world-clocks" type="b">
+      <default>true</default>
+      <summary>World clocks on the Calendar page</summary>
+      <description>A globe on the Calendar page shows the time in the cities of GNOME’s World Clocks.</description>
+    </key>
+    <key name="hidden-pages" type="as">
+      <default>[]</default>
+      <summary>Pages left out of the island</summary>
+      <description>Names of the open island’s pages that have no tab: music, notifications, focus, reminders, shelf, calendar. The Apps and Usage pages have their own switches (app-usage, usage-enabled).</description>
+    </key>
+    <key name="app-usage" type="b">
+      <default>false</default>
+      <summary>The Apps page, timing the application in front</summary>
+      <description>Shows the Apps page and times the application in front, whether or not there is keyboard or pointer input, keeping 30 days on this computer. Time pauses after five idle minutes, unless a video or another program holds the session awake. Off until you turn it on; off, nothing is timed and the page has no tab.</description>
+    </key>
+    <key name="devices-page" type="b">
+      <default>false</default>
+      <summary>The Devices page</summary>
+      <description>Shows the Devices page: each connected Bluetooth device with its battery. Its tab shows only while a device is connected. Off until you turn it on.</description>
+    </key>
+    <key name="app-usage-clear" type="b">
+      <default>false</default>
+      <summary>Clear app usage once</summary>
+      <description>Settings asks the island to forget the app usage; the island resets this to false when it has.</description>
     </key>
     <key name="agent-alerts-claude" type="b">
       <default>true</default>
@@ -159,11 +285,13 @@
     <key name="super-v" type="s">
       <choices>
         <choice value="isle"/>
+        <choice value="calendar"/>
+        <choice value="none"/>
         <choice value="gnome"/>
       </choices>
-      <default>'isle'</default>
+      <default>'calendar'</default>
       <summary>What Super+V (GNOME's calendar shortcut) opens</summary>
-      <description>"isle": the island's clipboard history. "gnome": GNOME's own calendar and notification list.</description>
+      <description>"isle": the island's clipboard history. "calendar": the island's Calendar page. "none": nothing. "gnome" is from before and reads as "calendar". With that page left out of the island, it opens the other one. It is GNOME's own shortcut (Super+V and Super+M), so Isle adds none.</description>
     </key>
     <key name="track-peek" type="b">
       <default>false</default>
@@ -192,6 +320,11 @@
       <summary>Internal: Do Not Disturb was turned on by a focus session</summary>
       <description>Kept across restarts and the lock screen so Isle can turn it off again afterwards.</description>
     </key>
+    <key name="focus-dnd-declined" type="x">
+      <default>-1</default>
+      <summary>Internal: the focus session Do Not Disturb was turned off in</summary>
+      <description>When that session started (milliseconds), so Do Not Disturb stays off until it ends, past the lock screen too; -1 for none.</description>
+    </key>
     <key name="clipboard-history" type="b">
       <default>true</default>
       <summary>Keep a history of what you copy</summary>
@@ -205,7 +338,52 @@
     <key name="voice-assistant" type="b">
       <default>true</default>
       <summary>Voice assistant</summary>
-      <description>Listen for requests on the shortcut and the mic button, and answer them with the AI chosen: Claude Code, Codex or Antigravity (agy).</description>
+      <description>Listen for requests on the shortcut and the mic button, and answer them with the AI chosen: Claude Code, Codex, Grok, opencode or Antigravity (agy).</description>
+    </key>
+    <key name="shortcut-music" type="as">
+      <default>[]</default>
+      <summary>Shortcut to the Music page</summary>
+      <description>Opens the island on the Music page from anywhere, holding the keyboard; pressed again, it closes. None at first.</description>
+    </key>
+    <key name="shortcut-notifications" type="as">
+      <default>[]</default>
+      <summary>Shortcut to the Notifications page</summary>
+      <description>Opens the island on the Notifications page from anywhere, holding the keyboard; pressed again, it closes. None at first.</description>
+    </key>
+    <key name="shortcut-focus" type="as">
+      <default>[]</default>
+      <summary>Shortcut to the Timer page</summary>
+      <description>Opens the island on the Timer page from anywhere, holding the keyboard; pressed again, it closes. None at first.</description>
+    </key>
+    <key name="shortcut-reminders" type="as">
+      <default>[]</default>
+      <summary>Shortcut to the Reminders page</summary>
+      <description>Opens the island on the Reminders page from anywhere, holding the keyboard; pressed again, it closes. None at first.</description>
+    </key>
+    <key name="shortcut-shelf" type="as">
+      <default>[]</default>
+      <summary>Shortcut to the Shelf page</summary>
+      <description>Opens the island on the Shelf page from anywhere, holding the keyboard; pressed again, it closes. None at first.</description>
+    </key>
+    <key name="shortcut-calendar" type="as">
+      <default>[]</default>
+      <summary>Shortcut to the Calendar page</summary>
+      <description>Opens the island on the Calendar page from anywhere, holding the keyboard; pressed again, it closes. None at first.</description>
+    </key>
+    <key name="shortcut-apps" type="as">
+      <default>[]</default>
+      <summary>Shortcut to the Apps page</summary>
+      <description>Opens the island on the Apps page from anywhere, holding the keyboard; pressed again, it closes. None at first.</description>
+    </key>
+    <key name="shortcut-devices" type="as">
+      <default>[]</default>
+      <summary>Shortcut to the Devices page</summary>
+      <description>Opens the island on the Devices page from anywhere, holding the keyboard; pressed again, it closes. None at first.</description>
+    </key>
+    <key name="shortcut-usage" type="as">
+      <default>[]</default>
+      <summary>Shortcut to the AI Usage page</summary>
+      <description>Opens the island on the AI Usage page from anywhere, holding the keyboard; pressed again, it closes. None at first.</description>
     </key>
     <key name="voice-shortcut" type="as">
       <default><![CDATA[['<Super>i']]]></default>
@@ -215,7 +393,7 @@
     <key name="voice-provider" type="s">
       <default>'auto'</default>
       <summary>AI the voice assistant asks</summary>
-      <description>“agy” (Antigravity), “claude” (Claude Code) or “codex” (Codex), each with its own sign-in; “auto” for the first installed and signed in.</description>
+      <description>“agy” (Antigravity), “claude” (Claude Code), “codex” (Codex), “grok” (Grok) or “opencode” (opencode), each with its own sign-in; “auto” for the first installed and signed in.</description>
     </key>
     <key name="voice-claude-model" type="s">
       <default>'sonnet'</default>
@@ -226,6 +404,16 @@
       <default>''</default>
       <summary>Model Codex answers with</summary>
       <description>A model id from Codex; empty for the one Codex itself uses.</description>
+    </key>
+    <key name="voice-grok-model" type="s">
+      <default>''</default>
+      <summary>Model Grok answers with</summary>
+      <description>A model id from Grok; empty for the one Grok itself uses.</description>
+    </key>
+    <key name="voice-opencode-model" type="s">
+      <default>''</default>
+      <summary>Model opencode answers with</summary>
+      <description>A model as “opencode models” lists it (provider/model); empty for the one opencode itself uses.</description>
     </key>
     <key name="voice-agy-model" type="s">
       <default>'gemini-3.8-flash-low'</default>
@@ -284,12 +472,12 @@
     <key name="voice-read-notifications" type="b">
       <default>false</default>
       <summary>Let the voice assistant read notifications</summary>
-      <description>Send the last few notifications with each request, so the AI (Claude Code, Codex or Antigravity) can read them out or summarise them.</description>
+      <description>Send the last few notifications with each request, so the AI (Claude Code, Codex, Grok, opencode or Antigravity) can read them out or summarise them.</description>
     </key>
     <key name="usage-enabled" type="b">
       <default>true</default>
       <summary>Show AI plan usage</summary>
-      <description>A Usage page and warnings for Claude (signed in with Claude Code) and ChatGPT (as Codex last saw it), when found.</description>
+      <description>A Usage page and warnings for Claude (signed in with Claude Code), ChatGPT (as Codex last saw it) and Grok, when found.</description>
     </key>
     <key name="usage-claude" type="b">
       <default>true</default>
@@ -298,6 +486,10 @@
     <key name="usage-codex" type="b">
       <default>true</default>
       <summary>Show ChatGPT's usage</summary>
+    </key>
+    <key name="usage-grok" type="b">
+      <default>true</default>
+      <summary>Show Grok's usage</summary>
     </key>
     <key name="usage-warn" type="i">
       <range min="50" max="99"/>
@@ -311,7 +503,7 @@
     </key>
     <key name="chimes" type="b">
       <default>true</default>
-      <summary>Play a sound when a focus session or break ends</summary>
+      <summary>Play a sound when a focus session or break ends, and for reminders</summary>
     </key>
   </schema>
 </schemalist>

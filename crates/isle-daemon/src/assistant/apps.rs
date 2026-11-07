@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! The assistant's app tools: installed apps found by what they do, and what loads the computer now.
 
@@ -75,6 +76,7 @@ pub fn find_apps(terms: &[String], home: &Path) -> String {
     text
 }
 
+/// What the assistant is told about one app, and the text its search terms are matched in.
 struct DesktopEntry {
     name: String,
     about: String,

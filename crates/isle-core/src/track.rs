@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! Cleaning up track metadata so lyric lookups find a match, e.g. YouTube's
 //! "Artist - Song (Official Video)" by "ArtistVEVO" becomes "Song" by "Artist".
@@ -84,6 +85,7 @@ fn strip_noise(title: &str) -> String {
     result.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Drops YouTube's " - Topic" and "VEVO" channel suffixes from an artist name.
 fn clean_artist(artist: &str) -> String {
     let artist = artist.trim();
     let artist = artist.strip_suffix(" - Topic").unwrap_or(artist);

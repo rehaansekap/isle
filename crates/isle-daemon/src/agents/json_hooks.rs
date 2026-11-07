@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
-//! Isle's hooks in an AI's JSON hooks file (Claude Code's settings.json, Codex's hooks.json, which share
-//! one shape): each event lists `{"hooks": [{"type": "command", "command": …}]}`. Everything else in the
-//! file is left as it was, in its order.
+//! Isle's hooks in a JSON hooks file of the shape Claude Code's settings.json and Codex's hooks.json share.
+//! Everything else in the file is left as it was, in its order.
 
 use std::path::Path;
 
@@ -52,6 +52,7 @@ pub fn remove(path: &Path, spec: &Spec) -> anyhow::Result<bool> {
     Ok(removed)
 }
 
+/// The file's JSON; a missing or empty file is an empty object.
 fn parse(path: &Path, text: Option<&str>) -> anyhow::Result<Value> {
     match text {
         Some(text) if !text.trim().is_empty() => serde_json::from_str(text)
@@ -70,6 +71,7 @@ fn save(path: &Path, settings: &Value, old: Option<&str>) -> anyhow::Result<()> 
     file::write_atomic(path, &text).with_context(|| format!("could not write {}", path.display()))
 }
 
+/// Isle's hooks carry its mark in the command.
 fn is_ours(hook: &Value, spec: &Spec) -> bool {
     hook["command"]
         .as_str()
@@ -86,6 +88,7 @@ fn hooks_of<'a>(settings: &'a Value, event: &str) -> impl Iterator<Item = &'a Va
         .flatten()
 }
 
+/// Every event has Isle's hook, with the right timeout and an isled still there.
 fn has_hooks(settings: &Value, spec: &Spec) -> bool {
     spec.events.iter().all(|(event, timeout)| {
         hooks_of(settings, event).any(|hook| {

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 // Now playing: cover on the left; title, artist, scrubber and controls beside it.
 // With lyrics on, a wider island with synced lyrics on the right. See docs/product-spec.md, section 5.
@@ -10,6 +11,7 @@ import St from 'gi://St';
 
 import {vividColorOfFile} from '../colors.js';
 import {VERTICAL, onUiScale, px} from '../compat.js';
+import {EXPANDED_WIDTH, LARGE_WIDTH, PAGE_HEIGHT} from '../expanded.js';
 import * as Format from '../format.js';
 import * as Playback from '../playback.js';
 import {Art, Bars, Slider, fence, icon, iconButton, label, ownIcon, restsAt, setButtonIcon, setEnabled, smallCover, coverKey} from '../widgets.js';
@@ -20,13 +22,38 @@ import {Page} from './page.js';
 const ART_SIZE = 104;
 /** The island widens to this while lyrics are shown. */
 const LYRICS_WIDTH = 720;
+/** The lyrics fade in over the last this many px the island widens to them (see `uncover`). */
+const UNCOVER_FADE = 24;
 /** How often the elapsed time and scrubber move while playing. */
 const PROGRESS_REFRESH_MS = 250;
 /** The music bars' opacity while the song is paused, as on the closed island. */
 const PAUSED_BARS_OPACITY = 110;
 
+/** Lays its child out as wide as with the lyrics shown, also while laid out ahead behind the narrower
+ * player (see `warmUp`): the lines wrap there once, not again in the first frame they show. */
+const LyricsWidthLayout = GObject.registerClass(
+class LyricsWidthLayout extends Clutter.LayoutManager {
+    vfunc_get_preferred_width(container, forHeight) {
+        return container.get_first_child().get_preferred_width(forHeight);
+    }
+
+    vfunc_get_preferred_height(container, forWidth) {
+        return container.get_first_child().get_preferred_height(forWidth);
+    }
+
+    vfunc_allocate(container, box) {
+        // The page is allocated before its children: its width now is the one it has.
+        const page = container.get_parent().get_allocation_box().get_width();
+        const wide = box.copy();
+        wide.x2 += Math.max(0, px(container.get_parent()?._lyricsWidth ?? LYRICS_WIDTH) - page);
+        container.get_first_child().allocate(wide);
+    }
+});
+
+/** The music page: the player, with lyrics or volume and outputs as its other modes. */
 export const MediaPage = GObject.registerClass(
 class MediaPage extends Page {
+    /** Builds all three layouts up front; only the mode's is shown. */
     _init(daemon, audio, {height}) {
         super._init(daemon, {
             style_class: 'isle-page isle-media',
@@ -59,7 +86,14 @@ class MediaPage extends Page {
         fence(this);
 
         this.watch(['nowPlaying', 'lyrics'], () => this._update());
+        // Left out of the island, it follows the songs again once it is back.
+        this.connect('availability-changed', () => !this.hidden && this._update());
         this.watch(['players'], () => this._syncPlayers());
+        // isled forgets it when it restarts (and a shell restarted while open left it on): told again.
+        this._daemonHandlers.push(daemon.connect('appeared', (_daemon, name) => {
+            if (name === 'media')
+                this._syncWatching({again: true});
+        }));
         this._audioIds = [
             audio.connect('changed', () => this._updateVolume()),
             audio.connect('outputs-changed', () => this._updateOutputs()),
@@ -70,14 +104,28 @@ class MediaPage extends Page {
         this.connect('destroy', () => this._onDestroy());
     }
 
+    /** A track, playing or paused, unless it is a browser's that is over. */
     get relevant() {
-        return Playback.hasTrack(this.daemon.state.nowPlaying);
+        return Playback.showsClosed(this.daemon.state.nowPlaying);
     }
 
+    /** Lyrics' width: as much wider as the island is (Settings → Size). */
+    get _lyricsWidth() {
+        return LYRICS_WIDTH + (this.pageHeight > PAGE_HEIGHT ? LARGE_WIDTH - EXPANDED_WIDTH : 0);
+    }
+
+    /** Settings → Size: the cover as much larger as the page is taller, the lyrics as much wider as the island. */
+    onPageHeight(height) {
+        this._playerArt?.resize(Math.round(ART_SIZE * height / PAGE_HEIGHT / 2) * 2, 16);
+        this.emit('width-changed');
+    }
+
+    /** Wider only with the lyrics open. */
     get preferredWidth() {
-        return this._shown('lyrics') ? px(LYRICS_WIDTH) : null;
+        return this._shown('lyrics') ? px(this._lyricsWidth) : null;
     }
 
+    /** The cover's colour, behind the lyrics only. */
     get tint() {
         return this._shown('lyrics') ? this._tint : null;
     }
@@ -110,7 +158,7 @@ class MediaPage extends Page {
             y_align: Clutter.ActorAlign.END,
             visible: false,
         });
-        // Sits over the corner, half outside it, like on a Mac.
+        // Sits over the corner, half outside it.
         onUiScale(badge, scale => badge.set_translation(5 * scale, 5 * scale, 0));
         this._badges.push({badge, icon: badgeIcon});
 
@@ -127,6 +175,7 @@ class MediaPage extends Page {
         return box;
     }
 
+    /** Title over artist, each cut short with an ellipsis. */
     _texts(titleClass, artistClass) {
         const box = new St.BoxLayout({...VERTICAL, x_expand: true, y_align: Clutter.ActorAlign.CENTER, style_class: 'isle-player-texts'});
         const title = label('', titleClass);
@@ -140,6 +189,7 @@ class MediaPage extends Page {
         return box;
     }
 
+    /** Elapsed time, scrubber and time left; letting go of the scrubber seeks. */
     _progress() {
         const row = new St.BoxLayout({style_class: 'isle-player-progress'});
         const elapsed = label('0:00', 'isle-time');
@@ -159,6 +209,7 @@ class MediaPage extends Page {
         return row;
     }
 
+    /** Previous, play or pause, and next. */
     _transport() {
         const row = new St.BoxLayout({style_class: 'isle-transport', y_align: Clutter.ActorAlign.CENTER});
         const play = iconButton('isle-play-symbolic', 'isle-button-flat isle-play',
@@ -182,9 +233,12 @@ class MediaPage extends Page {
 
     // Layouts.
 
+    /** The standard view: cover beside title, mode buttons, progress and controls. */
     _buildPlayer() {
         const player = new St.BoxLayout({style_class: 'isle-player', x_expand: true, y_expand: true});
         player.add_child(this._art(ART_SIZE, 16));
+        // The cover itself (`_art` gives it with its badge round it), resized with the page (`onPageHeight`).
+        this._playerArt = this._arts[this._arts.length - 1];
 
         const column = new St.BoxLayout({...VERTICAL, x_expand: true, y_align: Clutter.ActorAlign.CENTER, style_class: 'isle-player-column'});
         // Title and artist, with lyrics and output as small buttons at the right.
@@ -204,6 +258,13 @@ class MediaPage extends Page {
         modes.add_child(this._playerSwitch);
         modes.add_child(this._modeButton('lyrics', 'isle-lyrics', 'Show lyrics', false));
         modes.add_child(this._modeButton('audio', 'isle-output', 'Volume and output', false));
+        // While paused: put this player away until it plays again (a tab's video that is over).
+        this._dismiss = iconButton('isle-close-symbolic', 'isle-button-flat isle-player-dismiss',
+            () => this.daemon.call('media', 'Dismiss'), {size: 14, accessibleName: 'Hide until it plays again'});
+        this._dismiss.visible = false;
+        modes.add_child(this._dismiss);
+        // The last icon on the page's right edge, as the header's settings; its padding hangs past it.
+        onUiScale(modes, scale => (modes.translation_x = 5 * scale));
         head.add_child(modes);
         column.add_child(head);
         column.add_child(this._progress());
@@ -216,7 +277,7 @@ class MediaPage extends Page {
 
     /** The player in a column beside the lyrics. */
     _buildLyricsLayout() {
-        const layout = new St.BoxLayout({style_class: 'isle-lyrics-layout', x_expand: true, y_expand: true, visible: false});
+        const layout = new St.BoxLayout({style_class: 'isle-lyrics-layout', x_expand: true, y_expand: true});
 
         const side = new St.BoxLayout({...VERTICAL, style_class: 'isle-lyrics-side', y_align: Clutter.ActorAlign.CENTER});
         const top = new St.BoxLayout({style_class: 'isle-player-top'});
@@ -241,7 +302,9 @@ class MediaPage extends Page {
         this._lyricsPane = new LyricsPane(this);
         layout.add_child(side);
         layout.add_child(this._lyricsPane);
-        return layout;
+        const box = new St.Widget({layout_manager: new LyricsWidthLayout(), x_expand: true, y_expand: true, visible: false});
+        box.add_child(layout);
+        return box;
     }
 
     /** Volume, then the outputs to choose from. */
@@ -278,6 +341,7 @@ class MediaPage extends Page {
         return layout;
     }
 
+    /** Shown when no player has a track. */
     _buildEmpty() {
         const box = new St.BoxLayout({
             ...VERTICAL,
@@ -291,8 +355,16 @@ class MediaPage extends Page {
         return box;
     }
 
+    /** The lines show as the island makes room for them: never cut by its edge. */
+    uncover(past) {
+        const covered = past - this.get_theme_node().get_padding(St.Side.RIGHT);
+        this._lyricsPane.opacity = Math.round(255 * Math.min(1, Math.max(0, 1 - covered / px(UNCOVER_FADE))));
+    }
+
+    /** Opens `mode`, or goes back to the player if it is open already. */
     _toggleMode(mode) {
         this._mode = this._mode === mode ? 'player' : mode;
+        this._syncWatching();
         this._update();
         this.emit('width-changed');
         this.emit('tint-changed');
@@ -306,6 +378,7 @@ class MediaPage extends Page {
         this._audioLayout.show();
     }
 
+    /** Hides again whatever the mode doesn't show. */
     coolDown() {
         this._syncMode();
     }
@@ -320,7 +393,11 @@ class MediaPage extends Page {
         return hasTrack;
     }
 
+    /** Fills every layout from `nowPlaying`. */
     _update() {
+        // Left out in Settings: no covers loaded or tinted for a page that can't be shown.
+        if (this.hidden)
+            return;
         const {nowPlaying} = this.daemon.state;
         if (!this._syncMode())
             return;
@@ -341,6 +418,7 @@ class MediaPage extends Page {
         this._updateTint(nowPlaying.art_path);
 
         const playIcon = nowPlaying.status === 'Playing' ? 'isle-pause-symbolic' : 'isle-play-symbolic';
+        this._dismiss.visible = nowPlaying.status !== 'Playing';
         for (const button of this._playButtons)
             setButtonIcon(button, playIcon);
         // Dimmed where the player can't (no next song, a stream that can't pause).
@@ -381,6 +459,7 @@ class MediaPage extends Page {
         }
     }
 
+    /** Mute icon, slider and percentage, from the default output. */
     _updateVolume() {
         const audio = this._audio;
         setButtonIcon(this._muteButton, audio.iconName);
@@ -388,6 +467,7 @@ class MediaPage extends Page {
         this._volumeText.text = audio.muted ? 'Muted' : `${Math.round(audio.volume * 100)}%`;
     }
 
+    /** One row per output, the current one checked; a click switches to it. */
     _updateOutputs() {
         const audio = this._audio;
         const outputs = audio.outputs;
@@ -423,6 +503,7 @@ class MediaPage extends Page {
             this.markCold({force: true});
     }
 
+    /** Takes the lyrics' tint from the cover at `path`, once per cover. */
     _updateTint(path) {
         // A player may write the next song's cover under the same name: its time tells them apart.
         const key = coverKey(path);
@@ -439,6 +520,7 @@ class MediaPage extends Page {
         });
     }
 
+    /** Moves the times and scrubbers, and again shortly while playing on an open page. */
     _tickProgress() {
         const {nowPlaying} = this.daemon.state;
         if (!Playback.hasTrack(nowPlaying))
@@ -446,7 +528,7 @@ class MediaPage extends Page {
         const position = Playback.positionMs(nowPlaying);
         const length = Playback.lengthMs(nowPlaying);
         const elapsed = Format.duration(position);
-        // A minus sign, not a hyphen, as a Mac's player shows it.
+        // A minus sign, not a hyphen.
         const remaining = length > 0 ? `\u2212${Format.duration(length - position)}` : '';
         this._elapsed.forEach(text => (text.text = elapsed));
         this._remaining.forEach(text => (text.text = remaining));
@@ -466,20 +548,38 @@ class MediaPage extends Page {
             this._lyricsBars.ease({opacity, duration: 200});
     }
 
+    /** Starts the bars, the clock and the lyrics' scrolling. */
     onActivate() {
+        this._syncWatching();
         this._syncBars();
         this._tickProgress();
         this._lyricsPane.follow();
     }
 
+    /** Stops the bars and leaves the audio view. */
     onDeactivate() {
         this._lyricsBars.playing = false;
         // Reopening the island starts on the player, not a sub-view.
         if (this._mode === 'audio')
             this._toggleMode('audio');
+        this._syncWatching();
     }
 
+    /** Has isled read the player every second while the position shows (see Media1.SetWatching); never
+     * while closed, so a closed island costs nothing. `again` tells isled even if unchanged. */
+    _syncWatching({again = false} = {}) {
+        const watching = this.active && this._mode !== 'audio' && !this._destroyed;
+        if (watching === Boolean(this._watching) && !again)
+            return;
+        this._watching = watching;
+        // An isled from before SetWatching only keeps the old timing.
+        this.daemon.attemptQuietly('media', 'SetWatching', watching);
+    }
+
+    /** Stops listening to the audio outputs, and isled reading the player. */
     _onDestroy() {
         this._audioIds.forEach(id => this._audio.disconnect(id));
+        if (this._watching)
+            this.daemon.attemptQuietly('media', 'SetWatching', false);
     }
 });

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! Battery, network and Bluetooth status from the system bus, and events
 //! when they change (charger plugged in, Wi-Fi lost, earbuds connected...).
@@ -7,7 +8,7 @@ mod bluetooth;
 mod camera;
 mod network;
 mod power;
-mod sleep;
+pub mod sleep;
 
 use std::time::Duration;
 
@@ -32,6 +33,7 @@ const RESTART_MAX: Duration = Duration::from_secs(60);
 /// after it stops is quick again.
 const HEALTHY_AFTER: Duration = Duration::from_secs(60);
 
+/// Everything the island shows about the machine, published as one JSON property.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct SystemState {
     pub battery: Option<Battery>,
@@ -41,6 +43,7 @@ pub struct SystemState {
     pub camera_in_use: bool,
 }
 
+/// The laptop's own battery, from UPower's display device.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Battery {
     /// A whole number, so the state only changes when the shown level does.
@@ -50,6 +53,7 @@ pub struct Battery {
     pub charging: bool,
 }
 
+/// NetworkManager's primary connection.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct Network {
     pub connected: bool,
@@ -60,6 +64,7 @@ pub struct Network {
     pub name: String,
 }
 
+/// A connected Bluetooth device; `path` is its BlueZ object.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct BluetoothDevice {
     pub path: String,
@@ -69,6 +74,7 @@ pub struct BluetoothDevice {
     pub battery: Option<u8>,
 }
 
+/// A change worth an alert on the island.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SystemEvent {
@@ -85,8 +91,13 @@ pub enum SystemEvent {
         connected: bool,
         device: BluetoothDevice,
     },
+    /// A connected device's battery went under one of the low levels, `device.battery` its level now.
+    BluetoothLow {
+        device: BluetoothDevice,
+    },
 }
 
+/// isled's `System1` D-Bus object.
 #[derive(Default)]
 pub struct SystemService {
     state: SystemState,
@@ -154,9 +165,8 @@ async fn owned(bus: &Connection, name: &'static str) -> zbus::Result<()> {
     Ok(())
 }
 
-/// Runs the watcher from `start`, restarting it whenever it stops (UPower, NetworkManager and
-/// BlueZ can restart under us), backing off from [`RESTART_MIN`] to [`RESTART_MAX`]; while
-/// `service` (the bus and the name it needs) isn't there, it waits for it instead.
+/// Keeps a watcher running, since UPower, NetworkManager and BlueZ can restart under us; backs off
+/// between tries, and while `service` (bus and name) has no owner, waits for one instead.
 fn supervise<F, W>(name: &'static str, service: Option<(Connection, &'static str)>, start: F)
 where
     F: Fn() -> W + Send + 'static,
@@ -245,5 +255,17 @@ mod tests {
         let json: serde_json::Value = serde_json::to_value(&event).unwrap();
         assert_eq!(json["kind"], "network");
         assert_eq!(json["connection"], "wifi");
+
+        let event = SystemEvent::BluetoothLow {
+            device: BluetoothDevice {
+                path: "/org/bluez/hci0/dev_00".into(),
+                name: "Earbuds".into(),
+                icon: "audio-headphones".into(),
+                battery: Some(10),
+            },
+        };
+        let json: serde_json::Value = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["kind"], "bluetooth_low");
+        assert_eq!(json["device"]["battery"], 10);
     }
 }

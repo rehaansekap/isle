@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Installs an Isle package in a throwaway container and starts a headless GNOME Shell with it, failing
-# on any "JS ERROR", on the extension not loading, or on isled never appearing on the session bus.
-#   docker run --rm -v "$PWD:/src" ubuntu:24.04 /src/scripts/ci/smoke-test.sh /src/dist/<package>
-# The package is a release tarball (installed with get.sh, as the user), a .deb, an .rpm or an Arch package.
-# Runs as root: it installs GNOME Shell if missing, then runs the shell as the user "tester".
+# Copyright (C) 2026 zickrian
+# Run as root in a throwaway container: installs an Isle package (tarball, .deb, .rpm or Arch) and a headless
+# GNOME Shell as "tester", failing on any "JS ERROR", the extension not loading, or isled never on the bus.
 set -euo pipefail
 
 UUID="isle@zickrian.github.io"
@@ -13,7 +11,9 @@ DAEMON="io.github.zickrian.isle.Daemon"
 WAIT=60
 SETTLE=10
 
+# A step heading, in bold.
 say() { printf '\033[1m==> %s\033[0m\n' "$*"; }
+# Stops the test with a reason.
 fail() { printf 'Smoke test failed: %s\n' "$*" >&2; exit 1; }
 
 # GNOME Shell and what get.sh needs, on Ubuntu/Debian, Fedora or Arch.
@@ -142,6 +142,7 @@ session() {
     say "Smoke test passed"
 }
 
+# Whether a name is owned on the session bus.
 bus_has() {
     gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus \
         --method org.freedesktop.DBus.NameHasOwner "$1" 2>/dev/null | grep -q true

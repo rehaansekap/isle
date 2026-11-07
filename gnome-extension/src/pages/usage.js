@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
-// Usage: how much of each AI plan's limits is used, as isled reads them (Claude, and ChatGPT as Codex
-// saw it). One provider at a time, a bar per limit; with more, scrolling up or down (or the dots) moves
-// between them, as in a widget stack. The page has no tab without any.
+// Usage: how much of each AI plan's limits is used (Claude, ChatGPT as Codex saw it, Grok), a bar per
+// limit. One provider at a time, scrolled through like a widget stack; no tab without any.
 
 import Clutter from 'gi://Clutter';
 import GLib from 'gi://GLib';
@@ -19,9 +19,9 @@ import {Page} from './page.js';
 /** A limit warns (an alert) and then turns red at these shares; Settings may move them (see `setMarks`). */
 const MARKS = {warn: 80, critical: 95};
 /** Each provider's colour, for its bars. */
-const ACCENTS = {claude: [0.85, 0.47, 0.34], codex: [0.06, 0.64, 0.5]};
+const ACCENTS = {claude: [0.85, 0.47, 0.34], codex: [0.06, 0.64, 0.5], grok: [0.93, 0.94, 0.96]};
 const FALLBACK = Palette.BLUE;
-/** How far a scroll goes before it moves to the next provider, as the island's tabs do. */
+/** How far a scroll goes before it moves to the next provider. */
 const WHEEL_STEP = 1;
 const SWIPE_STEP = 1.5;
 const GESTURE_GAP_MS = 180;
@@ -29,10 +29,11 @@ const GESTURE_GAP_MS = 180;
 const SLIDE_MS = 220;
 const FILL_MS = 500;
 
+/** RGB 0..1 as a CSS colour. */
 const css = ([r, g, b], alpha = 1) => `rgba(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)}, ${alpha})`;
 
 /** Each provider's logo (icons/), shown by its name. */
-const LOGOS = {claude: 'isle-claude', codex: 'isle-openai'};
+const LOGOS = {claude: 'isle-claude', codex: 'isle-openai', grok: 'isle-grok'};
 
 /** The provider's logo, or a dot of its colour for one without. */
 function mark(id) {
@@ -49,6 +50,7 @@ const Bar = GObject.registerClass({
         'sweep': GObject.ParamSpec.double('sweep', null, null, GObject.ParamFlags.READWRITE, 0, 1, 1),
     },
 }, class Bar extends St.Widget {
+    /** `level` is 'normal', 'warn' or 'critical'. */
     _init(share, level, accent) {
         super._init({style_class: 'isle-usage-track', x_expand: true});
         this._share = share;
@@ -60,16 +62,19 @@ const Bar = GObject.registerClass({
         this.add_child(this._fill);
     }
 
+    /** 0..1, eased by `_fill`. */
     get sweep() {
         return this._sweep;
     }
 
+    /** Lays the fill out again on every step. */
     set sweep(value) {
         this._sweep = value;
         this.notify('sweep');
         this.queue_relayout();
     }
 
+    /** Fill width from share and sweep, never less than a round sliver. */
     vfunc_allocate(box) {
         this.set_allocation(box);
         const [width, height] = box.get_size();
@@ -82,8 +87,10 @@ const Bar = GObject.registerClass({
     }
 });
 
+// The Usage page, a card per provider.
 export const UsagePage = GObject.registerClass(
 class UsagePage extends Page {
+    /** `height` is the expanded island's page height. */
     _init(daemon, {height}) {
         super._init(daemon, {
             style_class: 'isle-page isle-usage',
@@ -111,6 +118,7 @@ class UsagePage extends Page {
         this._update();
     }
 
+    /** As isled last read them. */
     _providers() {
         return this.daemon.state.usage?.providers ?? [];
     }
@@ -126,6 +134,7 @@ class UsagePage extends Page {
         this._update();
     }
 
+    /** Asks for fresh numbers and grows the bars in. */
     onActivate() {
         // Fresh numbers when looked at; isled asks Claude at most every two minutes.
         this.daemon.call('usage', 'Refresh');
@@ -133,11 +142,19 @@ class UsagePage extends Page {
         this._fill();
     }
 
+    /** Where the shown provider sits now; the first if it is gone. */
     _index() {
         const index = this._providers().findIndex(provider => provider.id === this._shown);
         return Math.max(0, index);
     }
 
+    /** Isle's 12/24-hour setting changed: "Updated 20:40" as it says now, while on show. */
+    clockChanged() {
+        if (this.active)
+            this._update();
+    }
+
+    /** Rebuilds the card if its content changed, else just its times. */
     _update() {
         const available = this.available;
         if (available !== this._wasAvailable) {
@@ -169,6 +186,7 @@ class UsagePage extends Page {
             this.later('minute', 60000, () => this._update());
     }
 
+    /** Each dot jumps to its provider. */
     _updateDots(count, index) {
         this._dots.destroy_all_children();
         this._dots.visible = count > 1;
@@ -200,7 +218,7 @@ class UsagePage extends Page {
         this._fill();
     }
 
-    // Up and down move between providers, one a swipe or a wheel click; with one, the island flips tabs.
+    // Up and down move between providers, one a swipe or a wheel click.
     _onScroll(event) {
         const count = this._providers().length;
         if (count < 2)
@@ -235,7 +253,7 @@ class UsagePage extends Page {
             break;
         }
         default:
-            // Sideways is the island's, to flip tabs.
+            // Sideways moves nothing here.
             return Clutter.EVENT_PROPAGATE;
         }
         if (step)
@@ -243,7 +261,6 @@ class UsagePage extends Page {
         return Clutter.EVENT_STOP;
     }
 
-    /** The bars grow to their shares. */
     /** The bars grow in from `from` (0..1 of the way) over what is left of the fill. */
     _fill(from = 0) {
         this._fillStart = GLib.get_monotonic_time() - from * FILL_MS * 1000;
@@ -267,6 +284,7 @@ class UsagePage extends Page {
         this._resetLabels.forEach(([reset, ms]) => (reset.text = resets(ms)));
     }
 
+    /** One provider's card: logo, name, plan and freshness, then up to three limits. */
     _content(provider) {
         const accent = ACCENTS[provider.id] ?? FALLBACK;
         const content = new St.BoxLayout({...VERTICAL, style_class: 'isle-usage-content', x_expand: true, y_align: Clutter.ActorAlign.CENTER});
@@ -290,7 +308,7 @@ class UsagePage extends Page {
         for (const window of provider.windows.slice(0, 3))
             limits.add_child(this._limit(window, accent));
         if (provider.windows.length === 0)
-            limits.add_child(label('No limits reported yet', 'isle-usage-empty'));
+            limits.add_child(label(provider.empty || 'No limits reported yet', 'isle-usage-empty'));
         content.add_child(limits);
         return content;
     }
@@ -335,7 +353,7 @@ function resets(ms) {
     return `resets in ${minutes}m`;
 }
 
-/** "Updated 14:32", or "Codex, 14:32" for numbers as of Codex's last use; on another day, with its name. */
+/** "Updated 14:32", or "From Codex, 14:32" for numbers as of Codex's last use; on another day, with its name. */
 function updated(ms, fromCodex) {
     if (!ms)
         return '';

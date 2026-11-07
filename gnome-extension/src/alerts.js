@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 // Turns events into alerts for the peek view (see peek.js for the format).
 
@@ -7,6 +8,8 @@ import GLib from 'gi://GLib';
 import * as Format from './format.js';
 import * as Playback from './playback.js';
 import {notificationIcon, plainBody} from './notifications.js';
+import * as Theme from './theme.js';
+import {LOW_BATTERY, deviceIcon} from './widgets.js';
 
 const OSD_DURATION = 1500;
 const STATUS_DURATION = 2600;
@@ -14,6 +17,10 @@ const REMINDER_DURATION = 8000;
 /** As long as GNOME's own banner; a passing one (a screenshot taken) less. The pointer on it holds it. */
 const NOTIFICATION_DURATION = 4000;
 const TRANSIENT_NOTIFICATION_DURATION = 2500;
+/** Buttons that turn something down, never shown as the one to press. */
+const DECLINING = /^(decline|reject|deny|dismiss|cancel|ignore|hang up|end call|not now|tolak|abaikan|batal|tutup)\b/i;
+/** As many of a notification's buttons as GNOME's banner shows. */
+const MAX_NOTIFICATION_BUTTONS = 3;
 /** The longest an answer stays to be read, as the open island gives it (see VOICE_READ_MS in controller.js). */
 const ANSWER_MAX_DURATION = 8000;
 /** A critical notification stays this long once someone is there to see it. */
@@ -21,9 +28,10 @@ const CRITICAL_DURATION = 20000;
 
 /** A battery on its side; the ring around it shows the level. */
 function batteryIcon(percent) {
-    return percent <= 20 ? 'isle-battery-low-symbolic' : 'isle-battery-symbolic';
+    return percent <= LOW_BATTERY ? 'isle-battery-low-symbolic' : 'isle-battery-symbolic';
 }
 
+/** "42%", rounded. */
 function percentText(value) {
     return `${Math.round(value)}%`;
 }
@@ -80,6 +88,7 @@ export function osd(gicon, text, level, maxLevel) {
     };
 }
 
+/** Caps Lock turned on or off; it rises only when on. */
 export function capsLock(on) {
     return {
         key: 'keyboard',
@@ -109,7 +118,7 @@ export function system(event) {
             title: event.plugged ? 'Charging' : 'On battery',
             subtitle: event.plugged ? 'Charger connected' : 'Charger disconnected',
             value: percentText(event.percent),
-            tone: event.plugged ? 'good' : event.percent <= 20 ? 'bad' : 'neutral',
+            tone: event.plugged ? 'good' : event.percent <= LOW_BATTERY ? 'bad' : 'neutral',
             duration: STATUS_DURATION,
         };
     case 'battery_low':
@@ -154,13 +163,27 @@ export function system(event) {
         const battery = event.connected ? device.battery ?? null : null;
         return {
             key: `bluetooth:${device.path}`,
-            icon: device.icon.endsWith('-symbolic') ? device.icon : `${device.icon}-symbolic`,
+            icon: deviceIcon(device.icon),
             ring: battery !== null ? battery / 100 : null,
             title: device.name,
             subtitle: event.connected ? 'Connected' : 'Disconnected',
             value: battery !== null ? percentText(battery) : null,
-            tone: !event.connected ? 'neutral' : battery !== null && battery < 20 ? 'bad' : 'good',
+            tone: !event.connected ? 'neutral' : battery !== null && battery <= LOW_BATTERY ? 'bad' : 'good',
             duration: STATUS_DURATION,
+        };
+    }
+    // As the laptop's low battery, its level in a red ring round the device.
+    case 'bluetooth_low': {
+        const {device} = event;
+        return {
+            key: `bluetooth:${device.path}`,
+            icon: deviceIcon(device.icon),
+            ring: device.battery / 100,
+            title: device.name,
+            subtitle: 'Low battery',
+            value: percentText(device.battery),
+            tone: 'bad',
+            duration: REMINDER_DURATION,
         };
     }
     default:
@@ -168,6 +191,7 @@ export function system(event) {
     }
 }
 
+/** A pomodoro phase ended; when the next one waits to be started, a button starts it. */
 export function pomodoroFinished(finished, next, state, daemon) {
     const waiting = !state?.running;
     const minutes = state ? Math.round(state.duration_ms / 60000) : 0;
@@ -197,6 +221,7 @@ export function pomodoroFinished(finished, next, state, daemon) {
     };
 }
 
+/** A new song: its cover with the player's icon as a badge. */
 export function track(nowPlaying) {
     return {
         key: 'track',
@@ -253,9 +278,9 @@ function bannersOn(item) {
     return item.source?.policy?.showBanners ?? true;
 }
 
-/** A GNOME notification, shown in place of GNOME's own banner; `onShown` once it is on screen, `onWithdrawn(key)`
- * once its app takes it back. While the screen is `shared`, only who it is from shows. */
-export function notification(item, urgent, {onShown, onWithdrawn}, shared = false) {
+/** A GNOME notification, in place of GNOME's own banner; `onShown` once on screen, `onSeen` once someone is there to
+ * see it, `onWithdrawn(key)` once its app takes it back. While the screen is `shared`, only who it is from shows. */
+export function notification(item, urgent, {onShown, onSeen, onWithdrawn}, shared = false) {
     if (!numbers.has(item))
         numbers.set(item, ++lastNumber);
     const key = `notification:${numbers.get(item)}`;
@@ -266,29 +291,46 @@ export function notification(item, urgent, {onShown, onWithdrawn}, shared = fals
     // On one line, as the body.
     const title = (shared ? item.source?.title || 'New notification' : item.title || item.source?.title || '')
         .replace(/\s+/g, ' ').trim();
+    const buttons = shared ? [] : (item.actions ?? []).slice(0, MAX_NOTIFICATION_BUTTONS);
+    // The last, as GNOME's banner has it, unless it turns something down ("Decline"): then the last that doesn't.
+    const turnsDown = button => DECLINING.test(button.label ?? '');
+    const mainButton = buttons.findLastIndex(button => !turnsDown(button));
+    const press = button => {
+        if (!withdrawn.has(item))
+            button.activate();
+    };
     const alert = {
         // Its own key: one arriving behind another waits its turn; the same one updated replaces itself.
         key,
         kind: 'notification',
-        // A critical one waits for someone to be there, like GNOME's, which stays until handled.
+        // Put away with its ×, buttons or not, as GNOME's banner.
+        closable: true,
+        // A critical one keeps its whole time, like GNOME's, which stays until handled. Every one waits for
+        // someone to be there (see `waitsWhileAway` in controller.js).
         sticky: urgent,
-        // Its first button ("Mark as read"), as GNOME's banner had it.
-        action: !shared && item.actions?.length ? {
-            label: item.actions[0].label,
-            callback: () => {
-                if (!withdrawn.has(item))
-                    item.actions[0]?.activate();
-            },
-        } : undefined,
+        // One button ("Mark as read") beside the words; two or three ("Decline", "Accept") under them, all of
+        // them, as GNOME's banner has them.
+        action: buttons.length === 1 ? {label: buttons[0].label, callback: () => press(buttons[0])} : undefined,
+        actions: buttons.length > 1 ? buttons.map((button, index) => ({
+            label: button.label,
+            primary: index === mainButton,
+            callback: () => press(button),
+        })) : undefined,
         onShown: () => {
             if (!withdrawn.has(item))
                 onShown();
+        },
+        onSeen: () => {
+            if (!withdrawn.has(item))
+                onSeen();
         },
         appIcon: true,
         gicon: notificationIcon(item),
         icon: 'dialog-information-symbolic',
         title,
         subtitle: body,
+        // Its words on up to two lines before they are cut.
+        subtitleLines: 2,
         // A critical one stands out in red.
         tone: urgent ? 'bad' : 'neutral',
         priority: urgent ? 'instant' : undefined,
@@ -310,9 +352,10 @@ export function notification(item, urgent, {onShown, onWithdrawn}, shared = fals
             // Do Not Disturb turned on while it waited: it stays unread in the list, never popping up.
             if (withdrawn.has(item) || (!alert.shown && (item.acknowledged || (!urgent && !bannersOn(item)))))
                 return null;
-            const redone = notification(item, urgent, {onShown, onWithdrawn}, sharedNow);
+            const redone = notification(item, urgent, {onShown, onSeen, onWithdrawn}, sharedNow);
+            const labels = a => [a.action, ...a.actions ?? []].map(button => button?.label).join();
             if (redone.title === alert.title && redone.subtitle === alert.subtitle &&
-                redone.action?.label === alert.action?.label && redone.gicon === alert.gicon)
+                labels(redone) === labels(alert) && redone.gicon === alert.gicon)
                 return alert;
             redone.shown = alert.shown;
             return redone;
@@ -338,13 +381,18 @@ export function usage(provider, window, percent, resetsAt, critical) {
     const name = provider.toLowerCase();
     return {
         key: `usage:${provider}:${window}`,
-        icon: name.includes('claude') ? 'isle-claude' : name.includes('gpt') || name.includes('codex') ? 'isle-openai' : 'isle-gauge',
+        icon: name.includes('claude') ? 'isle-claude'
+            : name.includes('grok') ? 'isle-grok'
+            : name.includes('gpt') || name.includes('codex') ? 'isle-openai' : 'isle-gauge',
         ring: Math.min(1, percent / 100),
         title: provider,
         subtitle: resetsAt > 0 ? `${limitName(window)} · resets ${when}` : limitName(window),
         value: percentText(percent),
         // In the plan's own colour, as on the Usage page; red once nearly used up.
-        tone: Math.round(percent) >= critical ? 'bad' : name.includes('claude') ? 'claude' : name.includes('gpt') || name.includes('codex') ? 'codex' : 'neutral',
+        tone: Math.round(percent) >= critical ? 'bad'
+            : name.includes('claude') ? 'claude'
+            : name.includes('grok') ? 'grok'
+            : name.includes('gpt') || name.includes('codex') ? 'codex' : 'neutral',
         duration: REMINDER_DURATION,
         page: 'usage',
     };
@@ -383,8 +431,9 @@ function meetingService(link) {
     return null;
 }
 
-/** An event starts soon ({title, start_ms, end_ms} from the Calendar page); with a meeting `link`, Join opens it. */
-export function meeting(event, link, join) {
+/** An event starts soon ({title, start_ms, end_ms} from the Calendar page); with a meeting `link`, Join opens it.
+ * `onShown` once it is on screen. */
+export function meeting(event, link, join, onShown) {
     const start = new Date(event.start_ms);
     const minutes = Math.max(0, Math.round((event.start_ms - Date.now()) / 60000));
     const at = date => Format.timeOfDay(GLib.DateTime.new_from_unix_local(Math.floor(date.getTime() / 1000)));
@@ -401,11 +450,12 @@ export function meeting(event, link, join) {
         // Its time only runs while someone is there to see it, as a reminder's.
         sticky: true,
         action: link ? {label: 'Join', callback: join, primary: true} : null,
+        onShown,
         // When its turn comes: the minutes left then, and gone once the event is over (an hour without an end).
         fresh: () => {
             if (Date.now() >= (event.end_ms || event.start_ms + 3600e3))
                 return null;
-            const redone = meeting(event, link, join);
+            const redone = meeting(event, link, join, onShown);
             if (redone.title === alert.title)
                 return alert;
             redone.shown = alert.shown;
@@ -415,8 +465,11 @@ export function meeting(event, link, join) {
     return alert;
 }
 
-const AGENT_NAMES = {claude: 'Claude', codex: 'Codex'};
-const AGENT_APPS = {claude: 'Claude Code', codex: 'Codex'};
+const AGENT_NAMES = {claude: 'Claude', codex: 'Codex', grok: 'Grok'};
+const AGENT_APPS = {claude: 'Claude Code', codex: 'Codex', grok: 'Grok'};
+/** The agent's icon and accent colour; Claude's for anything unknown. */
+const agentIcon = provider => provider === 'codex' ? 'isle-openai' : provider === 'grok' ? 'isle-grok' : 'isle-claude';
+const agentTone = provider => provider === 'codex' ? 'codex' : provider === 'grok' ? 'grok' : 'claude';
 
 /** An AI agent needs the user, or is done ({provider, kind, project, message}); `show` brings its window up. */
 export function agent(event, show) {
@@ -429,11 +482,11 @@ export function agent(event, show) {
     return {
         // One per session: a newer word from the same one replaces it.
         key: `agent:${event.provider}:${event.session || event.project}`,
-        icon: event.provider === 'codex' ? 'isle-openai' : 'isle-claude',
+        icon: agentIcon(event.provider),
         motion: waiting ? 'ring' : 'bounce',
         title,
         subtitle: [event.project, detail].filter(Boolean).join(' · '),
-        tone: event.provider === 'codex' ? 'codex' : 'claude',
+        tone: agentTone(event.provider),
         duration: waiting ? REMINDER_DURATION + 4000 : REMINDER_DURATION,
         // It waits on the user: it stays until they are there to see it.
         sticky: waiting,
@@ -444,10 +497,12 @@ export function agent(event, show) {
 /** The light round an alert that asks (amber), and one that tells an agent is done (green). */
 const ASKING_GLOW = [[1, 0.62, 0.04], [1, 0.42, 0.25], [1, 0.8, 0.3]];
 const DONE_GLOW = [[0.19, 0.82, 0.35], [0.35, 0.88, 0.75], [0.7, 0.94, 0.35]];
+/** On glass, each runs one way as Classic does, deep to light: orange to gold, green to teal. */
+const GLASS_ASKING_GLOW = [[0.99, 0.48, 0.06], [0.93, 0.62, 0.07], [0.86, 0.75, 0.33]];
+const GLASS_DONE_GLOW = [[0.21, 0.64, 0.05], [0.07, 0.72, 0.45], [0.31, 0.86, 0.74]];
 
-/** What a tool call is about, in a line: a command as it is, else the tool and what it works on. */
-// What it asks to do, on one line: a shell command as it is, else the tool and what it touches
-// (isled sends that as a line; see agents/hook.rs `request`).
+/** What a tool call asks to do, on one line: a shell command as it is, else the tool and what it touches
+ * (isled sends that as a line; see agents/hook.rs `request`). */
 function toolLine(tool, input) {
     const line = String(typeof input === 'string' ? input
         : input?.command ?? input?.file_path ?? input?.path ?? input?.url ?? input?.pattern ?? '').split('\n')[0];
@@ -456,18 +511,93 @@ function toolLine(tool, input) {
     return [tool, line].filter(Boolean).join(' ');
 }
 
-/**
- * An AI agent asks to run something ({provider, project, tool, input, always}); `answer(choice)` sends
- * allow, deny or always back to it. The assistant shows it, as the one asking on its behalf.
- */
+/** A Shelf file was saved into Downloads as `name`; `show` shows it in the file manager. */
+export function savedToDownloads(name, show) {
+    return {
+        key: 'shelf-saved',
+        icon: 'isle-save-symbolic',
+        motion: 'bounce',
+        title: 'Saved to Downloads',
+        subtitle: name,
+        tone: 'good',
+        action: {label: 'Show', callback: show},
+        duration: NOTIFICATION_DURATION,
+    };
+}
+
+/** Saving a Shelf file into Downloads failed, for `why`. */
+export function saveFailed(why) {
+    return {
+        key: 'shelf-saved',
+        icon: 'isle-warning-symbolic',
+        title: 'Couldn’t save to Downloads',
+        subtitle: why,
+        tone: 'bad',
+        duration: NOTIFICATION_DURATION,
+    };
+}
+
+/** Sharing with a phone stopped by itself as this computer's network changed. */
+export function sharingStopped() {
+    return {
+        key: 'phone-stopped',
+        icon: 'isle-smartphone-symbolic',
+        title: 'Phone sharing stopped',
+        subtitle: 'This computer’s network changed',
+        tone: 'neutral',
+        duration: NOTIFICATION_DURATION,
+    };
+}
+
+/** A phone asks to connect while sharing ({id, device, address, code}); `answer(allow)` tells isled about
+ * that phone, whatever else asks meanwhile. */
+export function phoneAsks(ask, answer) {
+    return {
+        key: `phone-ask:${ask.id}`,
+        icon: 'isle-smartphone-symbolic',
+        motion: 'bounce',
+        // The code is the phone's own, shown big on its screen: only the phone showing it gets in.
+        title: `Allow ${ask.device} — code ${ask.code}?`,
+        // A long browser name goes on to a second line rather than losing the code.
+        titleLines: 2,
+        subtitle: `${ask.address} · the same code on the phone?`,
+        tone: 'neutral',
+        actions: [
+            {label: 'Deny', answer: 'deny', callback: () => answer(false)},
+            {label: 'Allow', answer: 'allow', primary: true, callback: () => answer(true)},
+        ],
+        // It waits on the user, as long as the phone waits (isled gives up after two minutes).
+        sticky: true,
+        duration: 120000,
+        priority: 'instant',
+    };
+}
+
+/** Files arrived from a phone and are on the Shelf (`names`, in order); `onShown` readies the Files tab. */
+export function phoneReceived(names, onShown) {
+    const one = names.length === 1;
+    return {
+        key: 'phone-received',
+        icon: 'isle-smartphone-symbolic',
+        motion: 'bounce',
+        title: one ? names[0] : `${names.length} files from your phone`,
+        subtitle: one ? 'From your phone · on the Shelf' : 'On the Shelf',
+        tone: 'good',
+        page: 'shelf',
+        duration: NOTIFICATION_DURATION,
+        onShown,
+    };
+}
+
+/** An AI agent asks to run something ({provider, project, tool, input, always}), shown by the assistant;
+ * `answer(choice)` sends allow, deny or always back. */
 export function agentAsks(request, look, answer) {
+    // Allow is the one to press; Always (Claude keeps a rule for next time) is offered, never pressed for you.
     const actions = [
         {label: 'Deny', answer: 'deny', callback: () => answer('deny')},
-        {label: 'Allow', answer: 'allow', primary: !request.always, callback: () => answer('allow')},
+        ...request.always ? [{label: 'Always', answer: 'allow', done: 'Always allowed here', callback: () => answer('always')}] : [],
+        {label: 'Allow', answer: 'allow', primary: true, callback: () => answer('allow')},
     ];
-    // Claude can keep a rule for next time; the alert says where it is kept.
-    if (request.always)
-        actions.push({label: 'Always', answer: 'allow', primary: true, done: 'Always allowed here', callback: () => answer('always')});
     return {
         key: `agent-ask:${request.id}`,
         bot: {look, glyph: '!'},
@@ -475,7 +605,10 @@ export function agentAsks(request, look, answer) {
         subtitle: request.project ? AGENT_APPS[request.provider] : '',
         code: toolLine(request.tool, request.input),
         tone: 'warn',
-        glow: ASKING_GLOW,
+        // Read as it is drawn: the theme may change while it shows.
+        get glow() {
+            return Theme.translucent() ? GLASS_ASKING_GLOW : ASKING_GLOW;
+        },
         actions,
         // It waits on the user: it stays until answered, or until the agent stops asking.
         sticky: true,
@@ -494,7 +627,9 @@ export function agentDone(event, look, show) {
         titleLines: 2,
         subtitle: `${[event.project, AGENT_APPS[event.provider]].filter(Boolean).join(' · ')} finished`,
         tone: 'good',
-        glow: DONE_GLOW,
+        get glow() {
+            return Theme.translucent() ? GLASS_DONE_GLOW : DONE_GLOW;
+        },
         actions: [
             ...show ? [{label: 'Open terminal', callback: show}] : [],
             {label: 'OK', primary: true, callback: () => {}},
@@ -505,8 +640,14 @@ export function agentDone(event, look, show) {
 
 /** The first sentence of `text`, cut to a line's worth. */
 function firstSentence(text) {
+    // The words first (`{"say":"…"}` is that sentence), then the first line that says something: not a
+    // heading alone ("## Summary"), code or a rule, unless that is all there is.
+    const words = Format.spoken(text ?? '');
+    const linesOf = part => part.split('\n').map(line => line.trim()).filter(Boolean);
+    const line = linesOf(words.replace(/```[\s\S]*?(```|$)/g, '')).find(each => !/^(#{1,6}\s|([-*_]\s*){3,}$)/.test(each)) ??
+        linesOf(words)[0] ?? '';
     // Markdown's marks only, not the characters of names (`user_id` keeps its underscore).
-    const first = Format.answerPlain((text ?? '').trim().split(/(?<=[.!?])\s|\n/)[0] ?? '')
+    const first = Format.answerPlain(line.split(/(?<=[.!?])\s/)[0])
         .replace(/^[#>\s]+/, '')
         .replace(/(^|[^\w])_([^_]+)_(?=[^\w]|$)/g, '$1$2')
         .replace(/(^|[^\w*])\*([^*]+)\*(?=[^\w*]|$)/g, '$1$2')
@@ -540,7 +681,7 @@ export function agentConnected(provider, look, settings) {
         key: `agent-connected:${provider}`,
         bot: {look, glyph: 'check', form: 'success'},
         title: `${AGENT_APPS[provider]} is connected`,
-        subtitle: provider === 'codex' ? 'Trust Isle’s hook once in Codex: /hooks' : 'Answer it from here when it asks',
+        subtitle: provider === 'codex' ? 'In Codex, type /hooks once and allow Isle' : 'Answer it from here when it asks',
         tone: 'good',
         actions: [
             {label: 'Settings', callback: settings},
@@ -550,12 +691,29 @@ export function agentConnected(provider, look, settings) {
     };
 }
 
+/** The model picked for the assistant isn't on `provider`'s plan now (it lapsed, say): `used` answers instead. */
+export function modelSwitched(provider, plan, picked, used) {
+    const name = {claude: 'Claude', codex: 'ChatGPT', grok: 'Grok', agy: 'Antigravity', opencode: 'opencode'}[provider] ??
+        'Your AI';
+    return {
+        key: `model-switched:${provider}`,
+        icon: {claude: 'isle-claude', codex: 'isle-openai', grok: 'isle-grok'}[provider] ?? 'isle-sparkle-symbolic',
+        title: plan ? `${name} ${plan} doesn’t include ${picked}` : `${picked} isn’t available`,
+        // A long model name ("Claude Opus 4.6 (Thinking)") wraps rather than being cut.
+        titleLines: 2,
+        // The pick comes back by itself once the plan allows it again.
+        subtitle: `Using ${used} for now`,
+        tone: 'neutral',
+        duration: REMINDER_DURATION,
+    };
+}
+
 /** The alerts from `provider` could not be turned on; `reason` is isled's. */
 export function agentRefused(provider, reason) {
     const name = AGENT_NAMES[provider] ?? 'Your AI';
     return {
         key: `agent-refused:${provider}`,
-        icon: provider === 'codex' ? 'isle-openai' : 'isle-claude',
+        icon: agentIcon(provider),
         motion: 'shake',
         title: `Couldn’t turn on ${name} alerts`,
         subtitle: reason,
@@ -564,16 +722,16 @@ export function agentRefused(provider, reason) {
     };
 }
 
-/** A newer Isle is out; `howTo` shows how to update. `packaged`: installed system-wide (.deb, .rpm, AUR). */
-export function update(version, howTo, packaged = false) {
+/** A newer Isle is out; `open` shows Settings' Update. `packaged`: installed system-wide (.deb, .rpm, AUR). */
+export function update(version, open, packaged = false) {
     return {
         key: 'update',
         icon: 'software-update-available-symbolic',
         motion: 'bounce',
         title: `Isle ${version} is out`,
-        subtitle: packaged ? 'Install its new package to update' : 'Run the install command again to update',
+        subtitle: packaged ? 'Update its package to get it' : 'Update in a click; your things stay',
         tone: 'good',
-        action: {label: 'How', callback: howTo},
+        action: {label: 'Update', callback: open},
         duration: REMINDER_DURATION,
     };
 }

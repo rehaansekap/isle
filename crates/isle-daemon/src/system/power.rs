@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 use std::collections::HashMap;
 use std::time::Duration;
 
 use futures_util::StreamExt;
+use isle_core::battery::low_level;
 use tokio::time::Instant;
 
 use zbus::Connection;
@@ -24,8 +26,6 @@ const INTERFACE: &str = "org.freedesktop.UPower.Device";
 /// discharging, pending-charge…), alerts only once.
 const FLAP_WINDOW: Duration = Duration::from_secs(30);
 
-/// Percentages at which a low-battery warning is shown, once each.
-const LOW_LEVELS: [f64; 3] = [20.0, 10.0, 5.0];
 /// The properties read; a change to any other (the energy, the rate, the time it was measured) is not.
 const READ: [&str; 4] = ["IsPresent", "Type", "State", "Percentage"];
 
@@ -35,6 +35,7 @@ const STATE_CHARGING: u32 = 1;
 const STATE_FULLY_CHARGED: u32 = 4;
 const STATE_PENDING_CHARGE: u32 = 5;
 
+/// Follows UPower's battery for the state and the plugged, full and low alerts, until the bus closes.
 pub async fn watch(system: Connection, iface: InterfaceRef<SystemService>) -> anyhow::Result<()> {
     let properties = PropertiesProxy::builder(&system)
         .destination(DESTINATION)?
@@ -103,15 +104,6 @@ pub async fn watch(system: Connection, iface: InterfaceRef<SystemService>) -> an
     }
 }
 
-/// The low level the battery just went under, if not warned about since unplugged (`warned`, the lowest
-/// so far): a level read a little up and down again, as some batteries are, warns once.
-fn low_level(before: f64, now: f64, warned: Option<f64>) -> Option<f64> {
-    LOW_LEVELS
-        .into_iter()
-        .filter(|&level| warned.is_none_or(|warned| level < warned))
-        .rfind(|&level| before > level && now <= level)
-}
-
 /// The battery as read, its exact level for the alerts.
 #[derive(Debug, Clone, PartialEq)]
 struct Reading {
@@ -172,16 +164,5 @@ mod tests {
         assert_eq!(reading(57.5).shown().percent, 58.0);
         // Small changes leave the state as it was.
         assert_eq!(reading(57.31).shown(), reading(56.9).shown());
-    }
-
-    #[test]
-    fn each_low_level_warns_once_until_plugged_in() {
-        assert_eq!(low_level(20.3, 19.8, None), Some(20.0));
-        // Back over 20% and under again: said already.
-        assert_eq!(low_level(20.1, 19.9, Some(20.0)), None);
-        assert_eq!(low_level(10.2, 9.9, Some(20.0)), Some(10.0));
-        // Asleep past two levels: the lowest.
-        assert_eq!(low_level(22.0, 8.0, None), Some(10.0));
-        assert_eq!(low_level(30.0, 25.0, None), None);
     }
 }

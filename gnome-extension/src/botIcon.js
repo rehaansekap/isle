@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 // A small copy of the assistant (see bot.js) for alerts and the closed island, with a status badge on its
 // corner. It holds still, moving only for a moment when told to (a hop, a shake), so it costs no frames.
@@ -11,6 +12,7 @@ import St from 'gi://St';
 
 import {Bot} from './bot.js';
 import {onUiScale, px} from './compat.js';
+import * as Theme from './theme.js';
 
 /** How long (ms) a gesture plays; the icon is still again after it. */
 const GESTURE_MS = 750;
@@ -19,13 +21,15 @@ const SETTLE_S = 0.7;
 /** While at work it blinks and glances this often (ms): alive, at a few frames every few seconds. */
 const ALIVE_MS = 2600;
 
+/** The bot drawn small, with an optional status badge. */
 export const BotIcon = GObject.registerClass(
 class BotIcon extends St.DrawingArea {
-    /** `size` in CSS pixels. */
-    _init(size, look = {}) {
+    /** `size` in CSS pixels; with `body` (CSS pixels) its body is that big, against the box's end. */
+    _init(size, look = {}, {body = 0} = {}) {
         super._init();
         this._size = size;
-        onUiScale(this, scale => this.set_size(size * scale, size * scale));
+        this._body = body;
+        onUiScale(this, scale => this.set_size(this._size * scale, this._size * scale));
         this._bot = new Bot(look);
         this._bot.holdEyes();
         this._badge = null;
@@ -99,6 +103,7 @@ class BotIcon extends St.DrawingArea {
         this._timeline.start();
     }
 
+    /** Where its eyes turn: a random glance, picked while it is alive. */
     _look() {
         return this._glance;
     }
@@ -110,21 +115,43 @@ class BotIcon extends St.DrawingArea {
             this._bot.step(from + t, this._look());
     }
 
+    /** Another size (and body size), in CSS pixels. */
+    resize(size, body = this._body) {
+        this._size = size;
+        this._body = body;
+        this.set_size(px(size), px(size));
+    }
+
+    /** Draws the bot, then the badge on top. */
     _paint(area) {
         const cr = area.get_context();
-        this._bot.paint(cr, px(this._size));
+        const size = px(this._size);
+        if (this._body) {
+            // Its body's box scaled to `body`, against the end and centred, on whole pixels so its edges stay
+            // sharp; a shape that is not round sits level too.
+            const {x, y, width, height} = this._bot.bounds(size);
+            const scale = px(this._body) / Math.max(width, height);
+            cr.translate(size - width * scale, Math.round((size - height * scale) / 2));
+            cr.scale(scale, scale);
+            cr.translate(-x, -y);
+        }
+        this._bot.paint(cr, size);
         if (this._badge)
             this._paintBadge(cr, px(1));
         cr.$dispose();
     }
 
-    // A small disc on the top left corner in the badge's colour, ringed in black so it stands off the body.
+    // A small disc on the top left corner in the badge's colour, ringed in the island's colour so it stands off the body.
     _paintBadge(cr, scale) {
         const r = Math.max(4, this._size * 0.17) * scale;
         const x = r + 0.5 * scale, y = r + 0.5 * scale;
         cr.arc(x, y, r + 1.5 * scale, 0, 2 * Math.PI);
-        cr.setSourceRGBA(0, 0, 0, 1);
+        // On glass the ring is cut out of the bot, so the glass itself shows through it.
+        if (Theme.translucent())
+            cr.setOperator(Cairo.Operator.CLEAR);
+        cr.setSourceRGBA(...Theme.solid(), 1);
         cr.fill();
+        cr.setOperator(Cairo.Operator.OVER);
         cr.arc(x, y, r, 0, 2 * Math.PI);
         cr.setSourceRGBA(...this._badge.color, 1);
         cr.fill();

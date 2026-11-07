@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! Clipboard history, newest first: re-copies move to the top, pins stay, the rest is pruned.
 //! Images go by content hash; anything that drops items returns the hashes left unused.
@@ -60,6 +61,7 @@ pub enum ClipError {
 }
 
 impl fmt::Display for ClipError {
+    /// The reason as the D-Bus error tells it.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::Empty => "nothing was copied",
@@ -166,6 +168,7 @@ impl Clip {
     }
 }
 
+/// One entry in the history.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClipItem {
     pub id: u64,
@@ -177,6 +180,7 @@ pub struct ClipItem {
     pub pinned: bool,
 }
 
+/// The whole history, as saved to disk; ids never repeat.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ClipboardHistory {
     /// Newest first.
@@ -199,6 +203,7 @@ impl ClipboardHistory {
         &self.items
     }
 
+    /// The item with this id, if it is still kept.
     pub fn get(&self, id: u64) -> Option<&ClipItem> {
         self.items.iter().find(|item| item.id == id)
     }
@@ -257,6 +262,7 @@ impl ClipboardHistory {
         true
     }
 
+    /// Pins or unpins an item; pinning past `MAX_PINNED` fails, unpinning never does.
     pub fn set_pinned(&mut self, id: u64, pinned: bool) -> Result<(), PinError> {
         let index = self.index_of(id).ok_or(PinError::NotFound)?;
         let count = self.items.iter().filter(|item| item.pinned).count();
@@ -320,6 +326,7 @@ impl ClipboardHistory {
         dropped
     }
 
+    /// Where the item with this id sits in the list.
     fn index_of(&self, id: u64) -> Option<usize> {
         self.items.iter().position(|item| item.id == id)
     }
@@ -388,6 +395,7 @@ fn percent_decode(text: &str) -> String {
     String::from_utf8_lossy(&decoded).into_owned()
 }
 
+/// The value of one hex digit, either case.
 fn hex_digit(byte: u8) -> Option<u8> {
     char::from(byte).to_digit(16).map(|digit| digit as u8)
 }

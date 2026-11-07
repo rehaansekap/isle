@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 // Cards for the Shelf page's Clipboard tab, pinned first, then newest. Click to copy; on hover: pin,
 // a hand-off (text to Tasks, images and files to Files) and ×. The keyboard can select and paste.
@@ -11,9 +12,10 @@ import Pango from 'gi://Pango';
 import Shell from 'gi://Shell';
 import St from 'gi://St';
 
-import {VERTICAL} from '../compat.js';
+import {thumbSize} from '../clipRules.js';
+import {VERTICAL, onUiScale, uiScale} from '../compat.js';
 import * as Format from '../format.js';
-import {icon, iconButton, label, wrapLines} from '../widgets.js';
+import {icon, iconButton, label, scrollSideways, wrapLines} from '../widgets.js';
 import {SHELF_CAPACITY} from './files.js';
 
 /** isled keeps 20 recent items and up to 10 pinned ones. */
@@ -32,6 +34,7 @@ function appFor(appId) {
     return appId ? Shell.AppSystem.get_default().lookup_app(appId) : null;
 }
 
+/** A link card's site name; the whole URL if it doesn't parse. */
 function hostOf(url) {
     try {
         return GLib.Uri.parse(url, GLib.UriFlags.NONE).get_host() ?? url;
@@ -55,6 +58,7 @@ export const ClipsView = GObject.registerClass({
         'activated': {param_types: [GObject.TYPE_JSOBJECT, GObject.TYPE_BOOLEAN]},
     },
 }, class ClipsView extends St.Widget {
+    /** A sideways strip of cards, with an empty state in its place when none match. */
     _init(daemon) {
         super._init({layout_manager: new Clutter.BinLayout(), x_expand: true, y_expand: true});
         this._daemon = daemon;
@@ -124,6 +128,7 @@ export const ClipsView = GObject.registerClass({
         this._filter();
     }
 
+    /** The search box's words; isled searches the items' whole text. */
     set query(query) {
         query = query.trim().toLowerCase();
         if (query === this._query && !this._searching)
@@ -230,6 +235,7 @@ export const ClipsView = GObject.registerClass({
         this._updateEmpty();
     }
 
+    /** Whether a shown item still waits for its card. */
     _undrawn() {
         return this._shown.some(item => !this._cards.has(item.id));
     }
@@ -256,12 +262,14 @@ export const ClipsView = GObject.registerClass({
         this._syncSelection();
     }
 
+    /** Stops drawing the rest of the cards in idle time. */
     _cancelPending() {
         if (this._pending)
             GLib.source_remove(this._pending);
         this._pending = 0;
     }
 
+    /** Why there are no cards: shared screen, no match, history off, or nothing yet. */
     _updateEmpty() {
         const searching = this._query || this._kind;
         if (this._hidden) {
@@ -325,6 +333,7 @@ export const ClipsView = GObject.registerClass({
             this.emit('activated', item, true);
     }
 
+    /** Marks the selected card, only while the keyboard is in use. */
     _syncSelection() {
         const selected = this._keyboard ? this._cards.get(this._shown[this._selected]?.id) : null;
         for (const card of this._cards.values()) {
@@ -335,32 +344,14 @@ export const ClipsView = GObject.registerClass({
         }
     }
 
+    /** Any wheel direction moves the strip sideways, once it overflows. */
     _onScroll(event) {
-        const adjustment = this._scroll.hadjustment;
-        if (adjustment.upper <= adjustment.page_size)
-            return Clutter.EVENT_PROPAGATE;
-        let delta = 0;
-        switch (event.get_scroll_direction()) {
-        case Clutter.ScrollDirection.UP:
-        case Clutter.ScrollDirection.LEFT:
-            delta = -1;
-            break;
-        case Clutter.ScrollDirection.DOWN:
-        case Clutter.ScrollDirection.RIGHT:
-            delta = 1;
-            break;
-        case Clutter.ScrollDirection.SMOOTH: {
-            const [dx, dy] = event.get_scroll_delta();
-            delta = Math.abs(dx) > Math.abs(dy) ? dx : dy;
-            break;
-        }
-        }
-        adjustment.value += delta * adjustment.step_increment * 1.5;
-        return Clutter.EVENT_STOP;
+        return scrollSideways(this._scroll, event);
     }
 
     // Cards
 
+    /** Body, hover actions, header and a feedback layer, stacked. */
     _card(item) {
         const card = new St.Widget({
             style_class: `isle-clip isle-clip-${item.kind}`,
@@ -369,6 +360,8 @@ export const ClipsView = GObject.registerClass({
             track_hover: true,
             x_expand: false,
             y_expand: false,
+            // At its own height, from the row's top: a taller page doesn't stretch it.
+            y_align: Clutter.ActorAlign.START,
             // Long text must not spill out of the card.
             clip_to_allocation: true,
         });
@@ -418,6 +411,7 @@ export const ClipsView = GObject.registerClass({
             this._showFlash(card, true);
     }
 
+    /** Without `fadeIn` it shows at once: a redrawn card picks up a flash already running. */
     _showFlash(card, fadeIn) {
         const {iconName, text, until} = this._flashing;
         card._feedbackIcon.gicon = icon(iconName);
@@ -459,12 +453,21 @@ export const ClipsView = GObject.registerClass({
         return header;
     }
 
+    /** Per kind: a thumbnail, a file icon and name, a host and URL, or the text itself. */
     _body(item) {
         switch (item.kind) {
         case 'image': {
             const body = new St.Widget({style_class: 'isle-clip-thumb', x_expand: true, y_expand: true});
-            if (item.thumb)
-                body.style = `background-image: url("${GLib.filename_to_uri(item.thumb, null).replace(/"/g, '%22')}");`;
+            if (item.thumb) {
+                const uri = GLib.filename_to_uri(item.thumb, null).replace(/"/g, '%22');
+                // Sized for the screen's pixels: 2 per CSS px on a 200% display, by St's scale or the monitor's.
+                const fit = () => {
+                    const density = uiScale() * Math.max(body.get_resource_scale() || 1, 1);
+                    body.style = `background-image: url("${uri}"); background-size: ${thumbSize(item.thumb_width, item.thumb_height, density)};`;
+                };
+                onUiScale(body, fit);
+                body.connect('resource-scale-changed', fit);
+            }
             const size = new St.Bin({
                 style_class: 'isle-clip-badge',
                 child: label(`${item.width}×${item.height}`, 'isle-clip-badge-label'),

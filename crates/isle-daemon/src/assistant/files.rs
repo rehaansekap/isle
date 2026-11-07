@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! The assistant's file tools: search by name, a folder's contents, recent files, a small text file
 //! and Chrome's profiles. Bounded in time, depth and size, so none loads the computer for long.
@@ -34,6 +35,7 @@ const SKIPPED: &[&str] = &[
 /// Never searched, even when asked: keys and passwords.
 const SECRET: &[&str] = &[".ssh", ".gnupg", ".password-store", ".pki", "keyrings"];
 
+/// What sort of file a search asks for, judged by the extension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     Any,
@@ -45,6 +47,7 @@ pub enum Kind {
 }
 
 impl Kind {
+    /// The AI's word for it, loosely; anything else means any file.
     pub fn parse(kind: &str) -> Self {
         match kind.to_lowercase().as_str() {
             "folder" | "directory" => Kind::Folder,
@@ -56,6 +59,7 @@ impl Kind {
         }
     }
 
+    /// A path's kind, by its extension.
     fn of(path: &Path, is_dir: bool) -> Self {
         if is_dir {
             return Kind::Folder;
@@ -76,6 +80,7 @@ impl Kind {
         }
     }
 
+    /// As written in the results.
     fn name(self) -> &'static str {
         match self {
             Kind::Any => "file",
@@ -88,6 +93,7 @@ impl Kind {
     }
 }
 
+/// One file or folder in a result list.
 #[derive(Debug)]
 struct Found {
     path: PathBuf,
@@ -212,6 +218,7 @@ pub fn find(terms: &[String], root: &Path, kind: Kind, home: &Path) -> String {
     text
 }
 
+/// `path` written from ~ when it is in the home folder.
 fn shorten(path: &Path, home: &Path) -> String {
     match path.strip_prefix(home) {
         Ok(rest) if rest.as_os_str().is_empty() => "~".into(),
@@ -220,6 +227,7 @@ fn shorten(path: &Path, home: &Path) -> String {
     }
 }
 
+/// A size in B, KB or MB.
 fn human(bytes: u64) -> String {
     match bytes {
         b if b >= 1 << 20 => format!("{:.1} MB", b as f64 / (1 << 20) as f64),
@@ -326,6 +334,7 @@ pub fn read_text(path: &Path, home: &Path) -> String {
     }
 }
 
+/// One result line: path, kind, size and date modified.
 fn line(found: &Found, home: &Path) -> String {
     let modified = chrono::DateTime::<chrono::Local>::from(found.modified).format("%Y-%m-%d");
     let size = if found.kind == Kind::Folder {

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! The microphone, through PipeWire's `pw-record`: 16 kHz mono 16-bit chunks.
 
@@ -13,6 +14,7 @@ use tokio::task::JoinHandle;
 pub const RATE: u32 = 16_000;
 const CHUNK_SAMPLES: usize = (RATE * CHUNK_MS / 1000) as usize;
 
+/// A running `pw-record`, read chunk by chunk.
 pub struct Mic {
     _child: Child,
     chunks: mpsc::Receiver<Vec<i16>>,
@@ -20,6 +22,7 @@ pub struct Mic {
 }
 
 impl Mic {
+    /// Starts recording; the recorder is killed when this is dropped.
     pub fn start() -> std::io::Result<Self> {
         let mut child = Command::new("pw-record")
             // Tagged as Isle's own, so the island does not take it for a call.
@@ -65,6 +68,7 @@ impl Mic {
 }
 
 impl Drop for Mic {
+    /// Stops the reader; `kill_on_drop` takes care of the recorder.
     fn drop(&mut self) {
         self.reader.abort();
     }

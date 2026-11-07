@@ -1,5 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 zickrian
 # Sets the battery's charge limit (20-100%) and keeps it after a restart or sleep, through a small
 # systemd service; 100 removes the limit. Asks for the sudo password. Usage: isle-charge-limit 80
 set -eu

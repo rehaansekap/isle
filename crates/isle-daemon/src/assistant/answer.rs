@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! What every AI answers with, whichever the user picked: a JSON object of what to say, the actions
 //! Isle runs, whether it is done or wants to see what they did first, and whether to listen again.
@@ -20,6 +21,7 @@ pub const SCHEMA: &str = r#"{"type":"object","required":["say","actions"],"prope
 "apps":{"type":"array","items":{"type":"string"}},
 "why":{"type":"string"},"detail":{"type":"string"},"root":{"type":"boolean"},"mode":{"type":"string"}}}}}}"#;
 
+/// One parsed answer, plus what isled noted while getting it.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Answer {
     pub say: String,
@@ -62,6 +64,7 @@ impl Answer {
     }
 }
 
+/// Serde default for `done`: an answer that leaves it out is finished.
 fn yes() -> bool {
     true
 }
@@ -88,6 +91,30 @@ pub fn window_focus(action: &mut Value) {
         action["type"] = "window".into();
         action["command"] = "focus".into();
     }
+}
+
+/// An event, task or reminder whose line came split (`title`, and its time in `detail` or `time`) gets it
+/// whole in `text`, as Isle reads it: some AIs split it, and nothing would be added.
+pub fn line_in_text(action: &mut Value) {
+    let kind = action["type"].as_str().unwrap_or_default();
+    let has_text = action["text"]
+        .as_str()
+        .is_some_and(|text| !text.trim().is_empty());
+    if has_text || !matches!(kind, "add_event" | "add_task" | "remind") {
+        return;
+    }
+    let part = |key: &str| {
+        action[key]
+            .as_str()
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+    };
+    let Some(title) = part("title") else { return };
+    let when = (kind == "add_event")
+        .then(|| part("time").or_else(|| part("detail")))
+        .flatten();
+    let line = when.map_or_else(|| title.to_owned(), |when| format!("{title} {when}"));
+    action["text"] = line.into();
 }
 
 /// What `say` holds so far in an answer still being written (`{"say": "Hel`), for the island to show as it
@@ -152,6 +179,17 @@ mod tests {
         let timer =
             from_text(r#"{"say": "Ok", "actions": [{"type": "focus", "command": "start"}]}"#);
         assert_eq!(timer.actions[0]["type"], "focus");
+        let mut split = serde_json::json!({"type": "add_event", "date": "2026-10-29", "title": "Meeting", "detail": "09:00"});
+        line_in_text(&mut split);
+        assert_eq!(split["text"], "Meeting 09:00");
+        let mut whole =
+            serde_json::json!({"type": "add_event", "text": "Lunch 12:00", "title": "Other"});
+        line_in_text(&mut whole);
+        assert_eq!(whole["text"], "Lunch 12:00");
+        let mut task =
+            serde_json::json!({"type": "add_task", "title": "Buy milk", "detail": "the oat one"});
+        line_in_text(&mut task);
+        assert_eq!(task["text"], "Buy milk");
         let plain = from_text("  Sure, it is 3 pm.  ");
         assert_eq!(plain.say, "Sure, it is 3 pm.");
         assert!(plain.actions.is_empty() && plain.done);

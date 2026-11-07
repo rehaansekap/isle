@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
-//! Vulkan, loaded only when there. ggml calls three Vulkan functions directly (the rest through
-//! `vkGetInstanceProcAddr`); defining them here keeps libvulkan.so.1 off the program's needed
-//! libraries. Where Vulkan is missing (or `--cpu` turns it off) it answers like a loader that finds
-//! no driver, and ggml uses the processor.
+//! Vulkan loaded only when there: defining ggml's three direct calls here keeps libvulkan.so.1 off the
+//! needed libraries. Without it (or with `--cpu`) it answers like a loader with no driver, so ggml uses the CPU.
 
 use std::ffi::{CStr, c_char, c_void};
 use std::sync::OnceLock;
@@ -49,7 +48,6 @@ fn real(name: &CStr) -> Option<*mut c_void> {
 }
 
 /// # Safety
-///
 /// Called by ggml as Vulkan's own: `name` is a C string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn vkGetInstanceProcAddr(
@@ -66,7 +64,6 @@ pub unsafe extern "C" fn vkGetInstanceProcAddr(
 }
 
 /// # Safety
-///
 /// As Vulkan's own; only reached once a device was found, so with the loader there.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn vkGetPhysicalDeviceFeatures2(device: Handle, features: *mut c_void) {
@@ -77,7 +74,6 @@ pub unsafe extern "C" fn vkGetPhysicalDeviceFeatures2(device: Handle, features: 
 }
 
 /// # Safety
-///
 /// As above.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn vkCmdCopyBuffer(
@@ -106,16 +102,19 @@ fn no_driver(name: &CStr) -> *const c_void {
     }
 }
 
+/// Reports Vulkan 1.0, too old for ggml, so it stops looking.
 unsafe extern "C" fn enumerate_instance_version(version: *mut u32) -> i32 {
     // SAFETY: Vulkan's caller passes somewhere to write the version.
     unsafe { version.write(VK_API_VERSION_1_0) };
     VK_SUCCESS
 }
 
+/// Fails as a loader does when no driver fits.
 unsafe extern "C" fn create_instance(_: *const c_void, _: *const c_void, _: *mut c_void) -> i32 {
     VK_ERROR_INCOMPATIBLE_DRIVER
 }
 
+/// Lists no instance extensions.
 unsafe extern "C" fn enumerate_extensions(
     _: *const c_char,
     count: *mut u32,
@@ -126,6 +125,7 @@ unsafe extern "C" fn enumerate_extensions(
     VK_SUCCESS
 }
 
+/// Lists no layers.
 unsafe extern "C" fn enumerate_layers(count: *mut u32, _: *mut c_void) -> i32 {
     // SAFETY: as above.
     unsafe { count.write(0) };

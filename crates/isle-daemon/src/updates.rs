@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! A newer Isle: GitHub's latest release, looked up at most once a day while the extension wants it
 //! (Settings), so the island can say an update is out. Nothing is sent but the request itself.
@@ -28,6 +29,7 @@ struct Checked {
     latest: String,
 }
 
+/// The Updates1 D-Bus object: the switch from Settings and the newer version found.
 pub struct UpdatesService {
     enabled: bool,
     latest: String,
@@ -35,6 +37,7 @@ pub struct UpdatesService {
 }
 
 impl UpdatesService {
+    /// Starts off; the returned `Notify` wakes `run` when Settings change.
     pub fn new() -> (Self, Arc<Notify>) {
         let wake = Arc::new(Notify::new());
         let service = Self {
@@ -106,6 +109,7 @@ pub async fn run(iface: InterfaceRef<UpdatesService>, wake: Arc<Notify>) {
     }
 }
 
+/// Sets the `Latest` property, signalling only when it changed.
 async fn publish(iface: &InterfaceRef<UpdatesService>, latest: String) {
     let mut service = iface.get_mut().await;
     if service.latest == latest {

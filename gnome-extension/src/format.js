@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 // Text formatting shared by the island's views.
 
@@ -6,21 +7,34 @@ import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
 
 let interfaceSettings = null;
+// Isle's own choice (Settings → Appearance → Clock): 'system', '24h' or '12h'.
+let clockFormat = 'system';
 
 /** Lets go of GNOME's settings once Isle is turned off; they are read again when needed. */
 export function release() {
     interfaceSettings = null;
+    clockFormat = 'system';
 }
 
-/** Whether the user prefers a 12-hour clock in GNOME's settings. */
+/** Isle's clock setting, as controller.js reads it. */
+export function setClockFormat(format) {
+    clockFormat = format;
+}
+
+/** Whether times show with a 12-hour clock: as Isle's setting says, else as GNOME's. */
 export function uses12Hour() {
+    if (clockFormat === '24h' || clockFormat === '12h')
+        return clockFormat === '12h';
     interfaceSettings ??= new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
     return interfaceSettings.get_string('clock-format') === '12h';
 }
 
-/** "14:05", or "2:05" with a 12-hour clock. */
-export function clockTime(dateTime = GLib.DateTime.new_now_local()) {
-    return dateTime.format(uses12Hour() ? '%l:%M' : '%H:%M').trim();
+/** The clock's two parts: {time: "14:05"} or, with a 12-hour clock, {time: "2:05", meridiem: "PM"} (none where the
+ * language has no such word). Two labels show them, the second smaller and dimmer (see stylesheet.css). */
+export function clockParts(dateTime = GLib.DateTime.new_now_local(), twelveHour = uses12Hour()) {
+    const time = dateTime.format(twelveHour ? '%l:%M' : '%H:%M').trim();
+    const meridiem = twelveHour ? dateTime.format('%p').trim() : '';
+    return {time, meridiem};
 }
 
 /** "14:05", or "2:05 PM" with a 12-hour clock: a time of day that stands alone. */
@@ -38,9 +52,14 @@ export function shortcutLabel(accelerator) {
     return [...modifiers, key.length === 1 ? key.toUpperCase() : key[0].toUpperCase() + key.slice(1)].join('+');
 }
 
-/** "Tue 20 Oct", like a Mac's menu bar. */
+/** "Tue 20 Oct", short and calm in the top bar. */
 export function longDate(dateTime = GLib.DateTime.new_now_local()) {
     return dateTime.format('%a %-d %b');
+}
+
+/** "Tue 20", beside the closed island's clock (Settings). */
+export function shortDate(dateTime = GLib.DateTime.new_now_local()) {
+    return dateTime.format('%a %-d');
 }
 
 /** Formats a duration as "3:07" or "1:02:07". */
@@ -68,8 +87,10 @@ export function ago(dateTime) {
     return dateTime.format(minutes < 6 * 24 * 60 ? '%a' : '%-d %b');
 }
 
-/** A span of time as "1h 15m", "25m" or "0m". */
+/** A span of time as "1h 15m", "25m", "<1m" or "0m". */
 export function hoursMinutes(ms) {
+    if (ms < 60000)
+        return ms > 0 ? '<1m' : '0m';
     const minutes = Math.round(ms / 60000);
     const hours = Math.floor(minutes / 60);
     if (!hours)
@@ -87,15 +108,32 @@ export function phaseName(phase) {
     }[phase] ?? phase;
 }
 
-/** Wall-clock milliseconds, in the same terms as the daemon's timestamps. */
-/** An answer's light Markdown (**bold**, `code`, "- " lists) as plain words on one line, for a single label. */
+/** An answer's light Markdown (**bold**, `code`, "- " lists) as plain words on one line, for a single label.
+ * A whole answer written as the schema's JSON (`{"say":"…"}`) shows as those words. */
 export function answerPlain(text) {
+    text = spoken(text);
     return text.split('\n')
         .map(line => line.replace(/^\s*[-*•]\s+/, '• ').replace(/\*\*(.+?)\*\*/g, '$1').replace(/`([^`]+)`/g, '$1').trim())
         .filter(Boolean)
         .join(' ');
 }
 
+/** The words of an answer that arrived as `{"say":"…"}`, also inside a ```json fence; else `text`. */
+export function spoken(text) {
+    const trimmed = text.trim();
+    const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/.exec(trimmed);
+    const body = fenced ? fenced[1] : trimmed;
+    if (!body.startsWith('{'))
+        return text;
+    try {
+        const say = JSON.parse(body).say;
+        return typeof say === 'string' && say.trim() ? say.trim() : text;
+    } catch {
+        return text;
+    }
+}
+
+/** Wall-clock milliseconds, in the same terms as the daemon's timestamps. */
 export function nowMs() {
     return Math.floor(GLib.get_real_time() / 1000);
 }

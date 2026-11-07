@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 use std::sync::Arc;
 
@@ -11,6 +12,7 @@ use zbus::{fdo, interface};
 use crate::clock::{next_midnight, now_ms, start_of_today, wait_until};
 use crate::store::Store;
 
+/// The to-do list on the bus, saved to disk after every change.
 pub struct TodoService {
     list: TodoList,
     store: Store<TodoList>,
@@ -18,6 +20,7 @@ pub struct TodoService {
 }
 
 impl TodoService {
+    /// Loads the saved list, dropping tasks finished before today.
     pub fn load() -> Self {
         let mut store = Store::new("todo");
         let mut list: TodoList = store.load();
@@ -31,10 +34,12 @@ impl TodoService {
         }
     }
 
+    /// The current list, for the assistant to read.
     pub fn list(&self) -> &TodoList {
         &self.list
     }
 
+    /// Saves the list, rearms the midnight wait and tells the extension.
     async fn changed(&self, emitter: &SignalEmitter<'_>) -> zbus::Result<()> {
         self.store.save(&self.list);
         self.wake.notify_one();
@@ -42,6 +47,7 @@ impl TodoService {
     }
 }
 
+/// The error for a task id that is not on the list.
 fn not_found(id: u64) -> fdo::Error {
     fdo::Error::InvalidArgs(format!("no task with id {id}"))
 }
@@ -62,6 +68,7 @@ impl TodoService {
         Ok(id)
     }
 
+    /// Ticks a task off, or back on.
     async fn set_done(
         &mut self,
         id: u64,
@@ -74,6 +81,7 @@ impl TodoService {
         Ok(self.changed(&emitter).await?)
     }
 
+    /// Renames a task; a blank title is refused.
     async fn rename(
         &mut self,
         id: u64,
@@ -88,6 +96,7 @@ impl TodoService {
         Ok(self.changed(&emitter).await?)
     }
 
+    /// Deletes a task.
     async fn remove(
         &mut self,
         id: u64,
@@ -99,6 +108,7 @@ impl TodoService {
         Ok(self.changed(&emitter).await?)
     }
 
+    /// Deletes every finished task.
     async fn clear_done(
         &mut self,
         #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,

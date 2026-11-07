@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 // The assistant's rules that need nothing of GNOME, kept apart so tests run them anywhere (tests/).
 
@@ -7,6 +8,7 @@ export function describeActions(actions = []) {
     const [first] = actions;
     if (!first)
         return 'Working…';
+    // On unless the action says off.
     const turning = (name, on) => `Turning ${name} ${on === false ? 'off' : 'on'}…`;
     const what = {
         open_app: `Opening ${first.app ?? 'the app'}…`,
@@ -36,7 +38,7 @@ export function describeActions(actions = []) {
         remove_event: 'Removing the event…',
         remind: 'Setting a reminder…',
         cancel_reminder: 'Cancelling the reminder…',
-        focus: 'Starting the focus timer…',
+        focus: 'Starting the timer…',
         terminal: 'Opening a terminal…',
         run: 'Asking to run it…',
         notifications: 'Opening your notifications…',
@@ -52,11 +54,8 @@ export const RUN_WRAPPER = '( eval "$1" ); printf \'\\n[isle-exit %d]\\n\' "$?"'
 /** As root: the same, its output written to the log by the user ($2, $3) rather than root. */
 export const ROOT_WRAPPER = `{ ${RUN_WRAPPER}; } 2>&1 | chroot --userspec="$2:$3" / tee -a -- "$4" >/dev/null`;
 
-/**
- * Whether `action` (a command the AI wants run, as isled hands it over) starts what its card shows and no
- * more: `systemd-run` with Isle's own options, its log in Isle's cache, and the shown command last. Isle
- * starts nothing else, even if something posed as isled on the bus. `user`: {home, cache, uid, gid}.
- */
+/** Whether `action` starts exactly what its card shows: `systemd-run` with Isle's own options, its log in Isle's
+ * cache, the shown command last. Nothing else starts, even if something posed as isled on the bus. */
 export function runnable(action, {home, cache = `${home}/.cache`, uid, gid}) {
     const argv = action?.spawn;
     if (!Array.isArray(argv) || argv[0] !== 'systemd-run' || typeof action.command !== 'string')
@@ -91,6 +90,7 @@ export function runnable(action, {home, cache = `${home}/.cache`, uid, gid}) {
 // the folders of their programs first (home, nvm, Homebrew…); as root, nothing the user can write.
 const SYSTEM_PATH = ['/usr/local/sbin', '/usr/local/bin', '/usr/sbin', '/usr/bin', '/sbin', '/bin', '/snap/bin'];
 
+/** A PATH option passes only as the system's folders, after the user's own absolute ones (none as root). */
 function pathAllowed(option, root) {
     if (!option.startsWith('--setenv=PATH='))
         return false;
@@ -111,6 +111,13 @@ export function showsWhole(text, max) {
         ![...text].some(c => c.charCodeAt(0) < 0x20 || (c.charCodeAt(0) >= 0x7f && c.charCodeAt(0) <= 0x9f));
 }
 
+/** The line `command` is typed into a terminal as, its lines joined by `&&` (a newline would be an Enter of its
+ * own); null for one the user could not see whole there, as a card would not offer it. */
+export function terminalLine(command) {
+    const line = command.split('\n').map(part => part.trim()).filter(Boolean).join(' && ');
+    return showsWhole(line, MAX_COMMAND) ? line : null;
+}
+
 /** Whether a window `title` names `project` as a word of its own: "isle — Terminal", not "WhatsApp" for "app". */
 export function namesProject(title, project) {
     if (!project)
@@ -126,6 +133,7 @@ export function stoppable(argv) {
         argv.at(-2) === 'stop' && /^isle-run-[\w-]+$/.test(argv.at(-1));
 }
 
+/** `text` escaped to match itself inside a RegExp. */
 const literal = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // Parts of the screen's work area, as [x, y, width, height] shares of it: where one window goes...

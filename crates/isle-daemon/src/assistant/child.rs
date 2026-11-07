@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
-//! The helpers isled starts for the assistant (the AI CLIs, speech recognition): each leads a process
-//! group of its own at a lower priority, so the desktop stays smooth while they work, and nothing they
-//! start outlives them.
+//! The helpers isled starts for the assistant (AI CLIs, speech recognition): each leads its own process
+//! group at a lower priority, so the desktop stays smooth and nothing they start outlives them.
 
 use std::ops::{Deref, DerefMut};
 
@@ -74,6 +74,7 @@ pub fn path_for(program: &std::path::Path) -> Option<std::ffi::OsString> {
 }
 
 impl Drop for Group {
+    /// Kills the helper and everything it started.
     fn drop(&mut self) {
         // Its group, led by it: the node workers or servers an AI CLI starts go with it.
         if let Some(pid) = self.0.id().and_then(|pid| libc::pid_t::try_from(pid).ok()) {
@@ -86,12 +87,14 @@ impl Drop for Group {
 impl Deref for Group {
     type Target = Child;
 
+    /// The child process, for its pipes and exit status.
     fn deref(&self) -> &Child {
         &self.0
     }
 }
 
 impl DerefMut for Group {
+    /// The child process, to take its pipes or wait on it.
     fn deref_mut(&mut self) -> &mut Child {
         &mut self.0
     }
@@ -105,10 +108,12 @@ pub struct Events<R> {
 }
 
 impl<R: AsyncRead + Unpin> Events<R> {
+    /// Reads events from a CLI's stdout, skipping lines over 8 MiB.
     pub fn new(output: R) -> Self {
         Self::with_limit(output, MAX_LINE)
     }
 
+    /// As `new`, with a smaller line limit for tests.
     fn with_limit(output: R, limit: usize) -> Self {
         Self {
             reader: BufReader::new(output),

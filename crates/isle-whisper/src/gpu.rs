@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! The GPUs ggml found (through Vulkan, when built with it), and the one speech runs on.
 
@@ -7,6 +8,7 @@ use std::os::raw::c_int;
 
 use whisper_rs::whisper_rs_sys as sys;
 
+/// A GPU speech could run on, with its name for Settings.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Gpu {
     /// Its place among the GPUs, as whisper.cpp counts them (`gpu_device`).
@@ -44,9 +46,8 @@ pub fn list() -> Vec<Gpu> {
     gpus
 }
 
-/// The GPU to run on: the first discrete one, else none (the processor). An integrated GPU shares
-/// the processor's memory and power: Intel's UHD 630 was slower than four of its cores, and lost
-/// its device on the full model. `pinned` (GGML_VK_VISIBLE_DEVICES set) takes the first listed.
+/// The first discrete GPU, else none (the processor): an integrated one was slower than the CPU and
+/// lost its device on the full model. `pinned` (GGML_VK_VISIBLE_DEVICES set) takes the first listed.
 pub fn choose(gpus: &[Gpu], pinned: bool) -> Option<&Gpu> {
     if pinned {
         gpus.first()

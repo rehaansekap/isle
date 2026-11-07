@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! Checks the Spotify links the AI answers `play_music` with, so a made-up one never reaches Spotify:
 //! a link Spotify doesn't know is dropped, and the extension searches for the music instead.

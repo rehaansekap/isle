@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! What isled and the helper say to each other, one JSON object a line: `{"ready", "device"}` once
 //! the model is loaded, then for each request `{"audio": path}` a `{"text"}` or an `{"error"}`.
@@ -26,14 +27,23 @@ pub fn samples(bytes: &[u8]) -> Vec<f32> {
         .collect()
 }
 
+/// Sent once the model is loaded, naming the device it runs on.
 pub fn ready(device: &str) -> String {
     json!({"ready": true, "device": device}).to_string()
 }
 
-pub fn text(text: &str) -> String {
-    json!({"text": text}).to_string()
+/// A request's transcript, with how much speech it had and what was not counted as said (isled logs
+/// them when no words came).
+pub fn text(heard: &crate::speech::Heard) -> String {
+    let dropped: Vec<_> = heard
+        .dropped
+        .iter()
+        .map(|(text, no_speech)| json!({"text": text, "no_speech": no_speech}))
+        .collect();
+    json!({"text": heard.text, "speech_ms": heard.speech_ms, "dropped": dropped}).to_string()
 }
 
+/// Why a request or the start failed.
 pub fn error(error: &str) -> String {
     json!({"error": error}).to_string()
 }
@@ -66,11 +76,19 @@ mod tests {
     fn answers_one_line_of_json() {
         let ready: Value = serde_json::from_str(&ready("cpu")).unwrap();
         assert_eq!(ready, json!({"ready": true, "device": "cpu"}));
-        assert_eq!(text("buka \"Files\""), r#"{"text":"buka \"Files\""}"#);
+        let heard = |text: &str| crate::speech::Heard {
+            text: text.into(),
+            speech_ms: 1500,
+            dropped: vec![("Terima kasih.".into(), 0.75)],
+        };
+        let said: Value = serde_json::from_str(&text(&heard("buka \"Files\""))).unwrap();
+        assert_eq!(said["text"], "buka \"Files\"");
+        assert_eq!(said["speech_ms"], 1500);
+        assert_eq!(said["dropped"][0]["text"], "Terima kasih.");
         assert_eq!(
             error("model small not downloaded"),
             r#"{"error":"model small not downloaded"}"#
         );
-        assert!(!text("a\nb").contains('\n'));
+        assert!(!text(&heard("a\nb")).contains('\n'));
     }
 }

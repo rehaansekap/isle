@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! Wall-clock time and waiting for wall-clock deadlines.
 
@@ -52,6 +53,15 @@ pub fn today() -> String {
     Local::now().date_naive().to_string()
 }
 
+/// The last `count` days in local time, oldest first and today last.
+pub fn days_back(count: u32) -> Vec<String> {
+    let today = Local::now().date_naive();
+    (0..count)
+        .rev()
+        .map(|back| (today - chrono::Duration::days(i64::from(back))).to_string())
+        .collect()
+}
+
 /// Start of today in local time, in milliseconds since the Unix epoch.
 pub fn start_of_today() -> i64 {
     local_midnight(Local::now().date_naive()).unwrap_or(0)
@@ -62,10 +72,29 @@ pub fn next_midnight() -> Option<i64> {
     local_midnight(Local::now().date_naive().succ_opt()?)
 }
 
-fn local_midnight(date: NaiveDate) -> Option<i64> {
-    // `earliest` resolves times made ambiguous by daylight saving changes.
-    let midnight = Local
-        .from_local_datetime(&date.and_hms_opt(0, 0, 0)?)
-        .earliest()?;
-    Some(midnight.timestamp_millis())
+/// Local midnight starting `date`, in milliseconds since the Unix epoch.
+pub(crate) fn local_midnight(date: NaiveDate) -> Option<i64> {
+    // `earliest` resolves times made ambiguous by daylight saving changes; where the clock skips midnight
+    // (Chile, Cuba, Lebanon), the day starts at its first time that exists.
+    let start = date.and_hms_opt(0, 0, 0)?;
+    (0..=8).find_map(|quarter| {
+        Local
+            .from_local_datetime(&(start + chrono::Duration::minutes(15 * quarter)))
+            .earliest()
+            .map(|time| time.timestamp_millis())
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_day_whose_midnight_is_skipped_still_starts() {
+        // Chile skips 00:00-01:00 on 6 September 2026; run with TZ=America/Santiago to see the gap.
+        let day = NaiveDate::from_ymd_opt(2026, 9, 6).unwrap();
+        let start = local_midnight(day).unwrap();
+        let before = local_midnight(day.pred_opt().unwrap()).unwrap();
+        assert!(start > before);
+    }
 }

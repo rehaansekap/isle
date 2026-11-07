@@ -1,11 +1,8 @@
 #!/usr/bin/env bash
-# Builds Isle (or takes the programs a release package ships ready-built, in
-# bin/) and installs it for the current user (no root needed):
-#   ~/.local/bin                              isled, isle-shelf, isle-whisper
-#   ~/.local/share/gnome-shell/extensions     the GNOME Shell extension
-#   ~/.local/share/dbus-1/services            D-Bus activation files
-#   ~/.config/systemd/user                    isled.service
-#   ~/.local/share/fonts/isle                 Inter, the island's typeface
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 zickrian
+# Builds Isle (or takes a release package's ready-built programs from bin/) and installs it for the user,
+# no root: programs in ~/.local/bin, the extension, D-Bus and systemd user files, and the Inter font.
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -18,9 +15,21 @@ CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
+# A bold heading for each stage.
 step() { printf '\033[1m==> %s\033[0m\n' "$*"; }
 
 [ "$(id -u)" -ne 0 ] || { echo "Run this as yourself, without sudo: Isle installs to your own home folder." >&2; exit 1; }
+# One install at a time (an update clicked in Settings and one run in a terminal): the second stops.
+mkdir -p "$DATA/isle"
+if command -v flock >/dev/null; then
+    exec 9>"$DATA/isle/install.lock"
+    flock -n 9 || { echo "Isle: another install of Isle is running; try again once it is done." >&2; exit 1; }
+fi
+# Put in place whole or not at all: copied beside it, then renamed over it (a full disk leaves the old one).
+put() {
+    install -Dm755 "$1" "$2.new"
+    mv -f "$2.new" "$2"
+}
 VERSION="$(grep -oE '"version-name": *"[^"]*"' gnome-extension/metadata.json | cut -d'"' -f4)"
 # An update keeps the user's choices; only a first install sets Isle's look.
 # Settings still saved (Isle uninstalled, now back) count as an update too.
@@ -83,14 +92,14 @@ else
 fi
 
 step "Installing binaries to $BINDIR"
-install -Dm755 "$BUILT/isled" "$BINDIR/isled"
+put "$BUILT/isled" "$BINDIR/isled"
 if [ "$SHELF" = 1 ]; then
-    install -Dm755 "$BUILT/isle-shelf" "$BINDIR/isle-shelf"
+    put "$BUILT/isle-shelf" "$BINDIR/isle-shelf"
     # A running helper is the old version; it starts again, updated, when needed.
     pkill -x isle-shelf 2>/dev/null || true
 fi
 if [ "$WHISPER" = 1 ]; then
-    install -Dm755 "$BUILT/isle-whisper" "$BINDIR/isle-whisper"
+    put "$BUILT/isle-whisper" "$BINDIR/isle-whisper"
 fi
 
 step "Installing services"
@@ -127,10 +136,16 @@ if [ -d "$DATA/gnome-shell/extensions/$OLD_UUID" ]; then
     echo "Replaced the install under the old id $OLD_UUID."
 fi
 DEST="$DATA/gnome-shell/extensions/$UUID"
+# Made aside (not among the extensions, where GNOME would read it), then swapped in: a copy that fails
+# (a full disk) leaves the old one whole.
+rm -rf "$DATA/isle"/extension-new*
+STAGE="$(mktemp -d "$DATA/isle/extension-new.XXXXXX")"
+chmod 755 "$STAGE"
+mkdir -p "$(dirname "$DEST")"
+cp -r gnome-extension/. "$STAGE/"
+glib-compile-schemas "$STAGE/schemas"
 rm -rf "$DEST"
-mkdir -p "$DEST"
-cp -r gnome-extension/. "$DEST/"
-glib-compile-schemas "$DEST/schemas"
+mv "$STAGE" "$DEST"
 
 step "Starting isled"
 # Let the session bus see the new activation files.
@@ -180,9 +195,8 @@ fi
 
 if [ "$FIRST" = 1 ]; then
 step "Setting up the top bar"
-# Isle's look is the same everywhere: a slim glass top bar with the island
-# hanging from the top of the screen like a notch. Only on a first
-# install: an update keeps what the user chose since.
+# Isle's look: a slim glass top bar with the island hanging from it like a notch.
+# Only on a first install; an update keeps what the user chose since.
 gsettings --schemadir "$DEST/schemas" set org.gnome.shell.extensions.isle top-bar-style glass
 gsettings --schemadir "$DEST/schemas" set org.gnome.shell.extensions.isle compact-top-bar true
 gsettings --schemadir "$DEST/schemas" set org.gnome.shell.extensions.isle island-in-top-bar true

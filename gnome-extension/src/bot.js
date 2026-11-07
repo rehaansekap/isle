@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
-// The assistant's character, with Cairo only so Settings can draw it too: a softly lit body in one of
-// several shapes, eyes on a ball inside it that look, blink and react, and the colours it lights the island with.
+// The assistant's character, drawn with Cairo alone so Settings can draw it too: its body, its eyes, its glow.
 // Shapes and expressions after bloub (MIT, © 2026 Jérémy Perret, github.com/jeremy-prt/bloub).
 
 import Cairo from 'cairo';
@@ -15,6 +15,7 @@ const SIN = ANGLES.map(Math.sin);
 /** Three calm colours, violet to blue to cyan: the island's light with the white bot. */
 export const CLASSIC_GLOW = [[0.56, 0.4, 1], [0.27, 0.56, 1], [0.22, 0.84, 0.96]];
 
+/** Scales `radii` so the farthest reaches `peak`. */
 const normalize = (radii, peak = 1) => {
     const most = Math.max(...radii);
     return Float64Array.from(radii, r => r * peak / most);
@@ -109,8 +110,11 @@ export const SHAPES = {
 /** Where the eyes sit on each shape (down, in body radii) and how big, so they stay well inside it. */
 const EYE_FIT = {cloud: {y: 0.1, size: 1}, drop: {y: 0.2, size: 0.9}, hexagon: {y: 0, size: 0.95}, ghost: {y: -0.06, size: 1}};
 
+/** '#rrggbb' to RGB in 0..1. */
 const hex = value => [1, 3, 5].map(i => parseInt(value.slice(i, i + 2), 16) / 255);
+/** `a` moved towards `b` by `t`. */
 const mix = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
+/** Perceived brightness (Rec. 709 weights). */
 const luminance = ([r, g, b]) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
 
 /** Colours to pick from: the body, and the three colours the island glows with beside it. */
@@ -128,6 +132,7 @@ export const COLORS = {
     graphite: {label: 'Graphite', body: '#8f909c', glow: ['#a0a8c0', '#d6dae6', '#7d8bb0']},
 };
 
+/** A glow colour as RGB, whether written in hex or already a triple. */
 const rgb = color => typeof color === 'string' ? hex(color) : color;
 
 /** Three glow colours around `base`: its hue and its two neighbours, bright enough to light the edge. */
@@ -171,6 +176,7 @@ export function paletteFor(color = 'cloud', glow = 'match') {
     };
 }
 
+/** Two matching eyes, the second's tilt mirrored. */
 const pair = (w, h, tilt = 0, open = 1, curve = 0) => [{w, h, tilt, open, curve}, {w, h, tilt: -tilt, open, curve}];
 // The head's turn and how far apart the eyes sit (degrees); each eye's width and height (eye units),
 // tilt, how open, and `curve`: 0 a capsule, 1 a smiling arc.
@@ -185,6 +191,7 @@ const EXPRESSIONS = {
     sad: {yaw: 2, pitch: -9, roll: 0, split: 15.5, eyes: pair(0.22, 0.42, 0, 0.6)},
     sleepy: {yaw: 3, pitch: -7, roll: -2, split: 16, eyes: pair(0.22, 0.42, 0, 0.4)},
 };
+/** A deep copy, so morphing never changes the presets. */
 const copyExpression = ({eyes, ...turn}) => ({...turn, eyes: eyes.map(eye => ({...eye}))});
 const TURN_KEYS = ['yaw', 'pitch', 'roll', 'split'];
 const EYE_KEYS = ['w', 'h', 'tilt', 'open', 'curve'];
@@ -227,7 +234,9 @@ const HEARD_PAUSE_S = 0.5;
 const RAD = Math.PI / 180;
 /** Forms whose eyes go where the form says, not to the pointer. */
 const OWN_GAZE = new Set(['thinking', 'searching', 'running', 'asking', 'error', 'confused']);
+/** Keeps `value` within ±`limit`. */
 const clamp = (value, limit = 1) => Math.max(-limit, Math.min(limit, value));
+/** 0 to 1, a little past 1 before it settles. */
 const easeOutBack = x => 1 + 2.2 * (x - 1) ** 3 + 1.2 * (x - 1) ** 2;
 
 /** Turns `u` towards `v` by `angle` (radians), and `v` along: one rotation of two axes, in place. */
@@ -243,6 +252,7 @@ function rotate(u, v, angle) {
 // The character's life: where it looks, its expression, blinks, gestures and shape, moved on by `step`
 // and drawn by `paint` into any Cairo context. It allocates nothing per frame.
 export class Bot {
+    /** Starts in `shape`, in a `paletteFor` palette. */
     constructor({shape = 'circle', palette = paletteFor()} = {}) {
         this.palette = palette;
         this._radii = Float64Array.from(SHAPES[shape]?.radii ?? SHAPES.circle.radii);
@@ -280,6 +290,7 @@ export class Bot {
         this._expression = copyExpression(EXPRESSIONS.attentive);
     }
 
+    /** What it is doing now (see `setForm`). */
     get form() {
         return this._form;
     }
@@ -305,10 +316,8 @@ export class Bot {
         this.blink();
     }
 
-    /**
-     * listening, typing, thinking, searching, asking, running, reply, success, confused or error; each new form
-     * pops in behind a blink.
-     */
+    /** listening, typing, thinking, searching, asking, running, reply, success, confused or error;
+     * each new form pops in behind a blink. */
     setForm(form) {
         if (form === this._form)
             return;
@@ -331,15 +340,14 @@ export class Bot {
         this._nextBlink = Infinity;
     }
 
+    /** Blinks now, unless a blink is already under way. */
     blink() {
         if (this.time - this._blinkAt > BLINK_S)
             this._blinkAt = this.time;
     }
 
-    /**
-     * Moves it on to `time` (s). `look` is where to look, x and y in -1..1, or null to look about on its own;
-     * `level` (0..1) is the voice heard.
-     */
+    /** Moves it on to `time` (s). `look` is where to look, x and y in -1..1, or null to look about on its own;
+     * `level` (0..1) is the voice heard. */
     step(time, look, level = 0) {
         const dt = Math.min(0.1, Math.max(0, time - this._last));
         this._last = this.time = time;
@@ -478,6 +486,7 @@ export class Bot {
         return out;
     }
 
+    /** One reused target object, so looking about allocates nothing. */
     _set(x, y) {
         this._targetOut ??= {x: 0, y: 0};
         this._targetOut.x = x;
@@ -519,6 +528,21 @@ export class Bot {
         this._paintBody(cr, radius);
         this._paintEyes(cr, radius, turn);
         cr.restore();
+    }
+
+    /** The box its body takes, at rest in the shape it is turning to, when painted `size` big:
+     * {x, y, width, height}. */
+    bounds(size) {
+        const radius = size * HEAD;
+        let left = 0, right = 0, top = 0, bottom = 0;
+        for (let i = 0; i < SAMPLES; i++) {
+            const x = radius * this._goalRadii[i] * COS[i], y = radius * this._goalRadii[i] * SIN[i];
+            left = Math.min(left, x);
+            right = Math.max(right, x);
+            top = Math.min(top, y);
+            bottom = Math.max(bottom, y);
+        }
+        return {x: size / 2 + left, y: size / 2 + top, width: right - left, height: bottom - top};
     }
 
     /** Traces the body's outline, `radius` big, round the origin: a smooth curve through its radii. */
@@ -572,6 +596,7 @@ export class Bot {
         cr.stroke();
     }
 
+    /** The eyes, placed on a ball turned with the head, narrowing as they turn away. */
     _paintEyes(cr, radius, turn) {
         const {forward, across, up} = this._head;
         forward.fill(0);

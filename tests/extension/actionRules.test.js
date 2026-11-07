@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 // The assistant's rules that need no GNOME: `node --experimental-default-type=module --test tests/extension/*.test.js`.
 
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 
-import {ROOT_WRAPPER, RUN_WRAPPER, describeActions, failed, namesProject, outcomeOf, runnable, slotsFor, stoppable} from '../../gnome-extension/src/actionRules.js';
+import {ROOT_WRAPPER, RUN_WRAPPER, describeActions, failed, namesProject, outcomeOf, runnable, slotsFor, stoppable, terminalLine} from '../../gnome-extension/src/actionRules.js';
 
 test('an action says what it did, or why it could not', () => {
     assert.deepEqual(outcomeOf(undefined), {ok: true, detail: ''});
@@ -45,6 +46,7 @@ const HOME = '/home/ana';
 const USER = {home: HOME, cache: `${HOME}/.cache`, uid: '1000', gid: '1000'};
 const SYSTEM_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin';
 const LOG = `${HOME}/.cache/isle/runs/run-1-0.log`;
+// The systemd-run argv isled sends to run `command`, as the user or as root.
 function spawn(command, {user = false, path = null, who = ['1000', '1000', LOG]} = {}) {
     return [
         'systemd-run', ...user ? ['--user'] : [], '--unit=isle-run-1-0', '--collect', '--quiet',
@@ -94,6 +96,19 @@ test('a command runs only as shown whole', () => {
     assert.ok(!runnable({command: 'sudo ls', spawn: spawn('sudo ls', {user: true})}, USER));
     assert.ok(!runnable({command: 'apt install x', spawn: spawn('apt install x')}, USER));
     assert.ok(!runnable(user('a'.repeat(401)), USER));
+});
+
+test('a command is typed into a terminal only as the user sees it', () => {
+    // Its lines one after another, on one line: a newline would press Enter.
+    assert.equal(terminalLine('cd ~/isle\n  git status  \n'), 'cd ~/isle && git status');
+    assert.equal(terminalLine('grep "a  b" f'), 'grep "a  b" f');
+    assert.equal(terminalLine(' \n '), '');
+    // Hidden, reordering or control characters, or more than a card shows: never typed.
+    assert.equal(terminalLine('ls ‮fdp.exe'), null);
+    assert.equal(terminalLine('rm​ -rf ~/old'), null);
+    assert.equal(terminalLine('echo \u001b[8mhidden'), null);
+    assert.equal(terminalLine('echo a\tb'), null);
+    assert.equal(terminalLine('a'.repeat(401)), null);
 });
 
 test('a window names the agent\'s project only as a word of its own', () => {

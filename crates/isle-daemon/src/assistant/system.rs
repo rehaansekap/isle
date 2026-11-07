@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! Facts about this computer for the AI, which may not look for itself: the system, battery, disk and memory.
 
@@ -73,6 +74,7 @@ fn folders() -> Option<String> {
     (!names.is_empty()).then(|| names.join(", "))
 }
 
+/// A small file's trimmed text; `None` if missing or empty.
 fn read(path: impl AsRef<Path>) -> Option<String> {
     let value = fs::read_to_string(path).ok()?.trim().to_owned();
     (!value.is_empty()).then_some(value)
@@ -147,6 +149,7 @@ fn disk() -> Option<(f64, f64)> {
     df(&String::from_utf8_lossy(&output.stdout))
 }
 
+/// Available and total bytes from `df -Pk` output.
 fn df(output: &str) -> Option<(f64, f64)> {
     let fields: Vec<&str> = output.lines().nth(1)?.split_whitespace().collect();
     let kib = |index: usize| fields.get(index)?.parse::<f64>().ok().map(|k| k * 1024.0);
@@ -164,6 +167,7 @@ fn memory(meminfo: &str) -> Option<(f64, f64)> {
     Some((field("MemAvailable:")?, field("MemTotal:")?))
 }
 
+/// "12.3 GB".
 fn gb(bytes: f64) -> String {
     format!("{:.1} GB", bytes / GB)
 }

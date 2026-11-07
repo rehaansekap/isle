@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! Parser for LRC, the de-facto format for time-synced lyrics.
 
 use serde::{Deserialize, Serialize};
 
+/// One line of lyrics and when it is sung.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LyricLine {
     /// Start of the line in milliseconds from the beginning of the track.

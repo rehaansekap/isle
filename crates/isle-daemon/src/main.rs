@@ -1,20 +1,24 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! `isled`: the Isle background service, on the session bus as `io.github.zickrian.isle.Daemon`.
 //! See `docs/dbus-api.md` for the interfaces.
 
 mod agents;
+mod app_usage;
 mod assistant;
 mod calendar;
 mod caller;
 mod clipboard;
 mod clock;
+mod eds;
 mod http;
 mod login_env;
 mod media;
 mod meeting;
 mod pomodoro;
 mod reminders;
+mod share;
 mod shelf;
 mod store;
 mod system;
@@ -31,12 +35,14 @@ use zbus::connection;
 use zbus::fdo::{DBusProxy, RequestNameFlags, RequestNameReply};
 
 use crate::agents::AgentsService;
+use crate::app_usage::AppUsageService;
 use crate::assistant::AssistantService;
 use crate::calendar::CalendarService;
 use crate::clipboard::ClipboardService;
 use crate::media::MediaService;
 use crate::pomodoro::PomodoroService;
 use crate::reminders::RemindersService;
+use crate::share::ShareService;
 use crate::shelf::ShelfService;
 use crate::system::SystemService;
 use crate::todo::TodoService;
@@ -59,8 +65,31 @@ Usage: isled [--version | --doctor | --report | --unhook-all | --help]
 
 Claude Code and Codex run `isled --agent-hook claude|codex` themselves, once their alerts are on.";
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> anyhow::Result<()> {
+/// glibc keeps freed memory to use again, so one big picture or download held isled's memory up for
+/// good: big blocks go back to the system once freed, and one pool serves both threads.
+#[cfg(target_env = "gnu")]
+fn keep_heap_small() {
+    const BIG: libc::c_int = 64 * 1024;
+    // SAFETY: tuning glibc's allocator, before any thread but this one exists.
+    unsafe {
+        libc::mallopt(libc::M_ARENA_MAX, 1);
+        libc::mallopt(libc::M_MMAP_THRESHOLD, BIG);
+        libc::mallopt(libc::M_TRIM_THRESHOLD, BIG);
+    }
+}
+
+/// Runs the service, or one of the command-line tools in `HELP`.
+fn main() -> anyhow::Result<()> {
+    #[cfg(target_env = "gnu")]
+    keep_heap_small();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(run())
+}
+
+/// The service, or a command-line tool, on the runtime `main` made.
+async fn run() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args_os()
         .map(|arg| arg.to_string_lossy().into_owned())
         .collect();
@@ -122,15 +151,18 @@ async fn main() -> anyhow::Result<()> {
     let (assistant, assistant_commands) = AssistantService::new();
     let (usage, usage_refresh) = UsageService::new();
     let (updates, updates_wake) = UpdatesService::new();
+    let (media, media_wishes) = MediaService::new();
     let server = session.object_server();
-    server.at(OBJECT_PATH, MediaService::default()).await?;
+    server.at(OBJECT_PATH, media).await?;
     server.at(OBJECT_PATH, PomodoroService::load()).await?;
     server.at(OBJECT_PATH, TodoService::load()).await?;
     server.at(OBJECT_PATH, ShelfService::load()).await?;
+    server.at(OBJECT_PATH, ShareService::default()).await?;
     server.at(OBJECT_PATH, ClipboardService::load()).await?;
     server.at(OBJECT_PATH, CalendarService::load()).await?;
     server.at(OBJECT_PATH, RemindersService::load()).await?;
     server.at(OBJECT_PATH, SystemService::default()).await?;
+    server.at(OBJECT_PATH, AppUsageService::load()).await?;
     server.at(OBJECT_PATH, assistant).await?;
     server.at(OBJECT_PATH, usage).await?;
     server.at(OBJECT_PATH, updates).await?;
@@ -140,6 +172,7 @@ async fn main() -> anyhow::Result<()> {
     let pomodoro = server.interface::<_, PomodoroService>(OBJECT_PATH).await?;
     let todo = server.interface::<_, TodoService>(OBJECT_PATH).await?;
     let system = server.interface::<_, SystemService>(OBJECT_PATH).await?;
+    let app_usage = server.interface::<_, AppUsageService>(OBJECT_PATH).await?;
     let assistant = server.interface::<_, AssistantService>(OBJECT_PATH).await?;
     let usage = server.interface::<_, UsageService>(OBJECT_PATH).await?;
     tokio::spawn(usage::run(usage, usage_refresh));
@@ -147,19 +180,28 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(updates::run(updates, updates_wake));
     let agents = server.interface::<_, AgentsService>(OBJECT_PATH).await?;
     tokio::spawn(agents::watch(agents));
+    tokio::spawn(shelf::prune(
+        server.interface::<_, ShelfService>(OBJECT_PATH).await?,
+    ));
+    tokio::spawn(clipboard::remake_thumbs(
+        server.interface::<_, ClipboardService>(OBJECT_PATH).await?,
+    ));
+    let calendar = server.interface::<_, CalendarService>(OBJECT_PATH).await?;
+    tokio::spawn(calendar::send_waiting(calendar.clone(), session.clone()));
     let own_data = assistant::Sources {
         todo: todo.clone(),
-        calendar: server.interface::<_, CalendarService>(OBJECT_PATH).await?,
+        calendar,
         reminders: server.interface::<_, RemindersService>(OBJECT_PATH).await?,
     };
 
     let session_for_media = session.clone();
     tokio::spawn(async move {
-        if let Err(err) = media::watch(session_for_media, media).await {
+        if let Err(err) = media::watch(session_for_media, media, media_wishes).await {
             warn!("media monitoring stopped: {err}");
         }
     });
     tokio::spawn(todo::run(todo));
+    tokio::spawn(app_usage::run(app_usage));
     tokio::spawn(assistant::run(assistant, own_data, assistant_commands));
 
     match zbus::Connection::system().await {

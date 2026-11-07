@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
-// Short-lived alerts the island grows to show. An alert: {key (same key replaces), icon | gicon | art | bot, badge,
-// appIcon, ring, ringIconSize, volume, title, titleLines, subtitle (cutSubtitle in its place when the title is cut), code,
-// tone, value, status, level, action | actions, duration, onActivate, page, priority, transient, motion (the icon's,
-// once; see `playMotion` in widgets.js)}.
+// Short-lived alerts the island grows to show. An alert has a key (same key replaces), an icon, art, ring or bot, a
+// title and subtitle, tone, a value or level, actions, duration and priority; `setAlert` reads the rest.
 
 import Clutter from 'gi://Clutter';
 import GLib from 'gi://GLib';
@@ -14,21 +13,30 @@ import St from 'gi://St';
 import {BotIcon} from './botIcon.js';
 import {VERTICAL, onUiScale, px} from './compat.js';
 import * as Palette from './palette.js';
-import {Art, LevelBar, Ring, VolumeGlyph, cornerClose, icon, isSymbolic, ownIcon, pillButton, playMotion, revealClose,
-    wrapLines} from './widgets.js';
+import * as Theme from './theme.js';
+import {Art, LevelBar, Ring, VolumeGlyph, WrapLayout, cornerClose, icon, isSymbolic, ownIcon, pillButton, playMotion,
+    revealClose, wrapLines} from './widgets.js';
 
-/** Narrowest and widest an alert gets; in between it fits its content. Sizes are in CSS pixels (see `px`). */
-const MIN_WIDTH = 220;
+/** The widest an alert gets; narrower, it fits its content. Sizes are in CSS pixels (see `px`). */
 const MAX_WIDTH = 380;
-/** Height of the part that hangs below the top bar: a line of text, or two. */
-const HEIGHT = {one: 44, two: 52};
-/** A two-line title's width: the widest alert less its padding (14 + 14), badge (32) and spacing (10). */
-const TITLE_WRAP_WIDTH = MAX_WIDTH - 70;
-/** An alert that asks (Allow, Deny…) is this wide, with the assistant this big beside it. */
+/** Room round the badge, as much on every side (see .isle-peek-row); PEEK_RADIUS in controller.js is the
+ * badge's radius plus this, so the corners follow it. */
+const PADDING = 12;
+/** Room round one lit along its edges (an agent's ask): its buttons clear of the light (see .isle-peek-row-glow). */
+const GLOW_PADDING = 16;
+/** Height of the part that hangs below the top bar: the badge and its room above and below. */
+const HEIGHT = 32 + 2 * PADDING;
+/** A two-line title's width: the widest alert less its padding, badge (32) and spacing (10). */
+const TITLE_WRAP_WIDTH = MAX_WIDTH - 2 * PADDING - 42;
+/** The widest an alert that asks (Allow, Deny…) gets; narrower, it fits what it says. The assistant is this big beside it. */
 const DECISION_WIDTH = 440;
+/** As wide as its buttons need, up to this (the open island is 600); past it, they go on to a line below. */
+const ACTIONS_WIDTH = 560;
+/** Between its buttons, and between their lines. */
+const ACTIONS_SPACING = 8;
 const BOT_SIZE = 46;
-/** Its texts' width: less its padding (20 + 22), the assistant and the spacing (14); see .isle-peek-row-asks. */
-const DECISION_TEXT_WIDTH = DECISION_WIDTH - BOT_SIZE - 56;
+/** Its texts' widest: less its padding, the assistant and the spacing (12); see .isle-peek-row-asks. */
+const DECISION_TEXT_WIDTH = DECISION_WIDTH - 2 * PADDING - BOT_SIZE - 12;
 /** Its answer shows this long (ms), the assistant hopping or shaking, before the alert goes. */
 const ANSWERED_MS = 850;
 /** Buttons that answer (Allow, Run) take no press this soon after they show. */
@@ -48,16 +56,18 @@ const TONE_COLORS = {
     // The plans' colours on the Usage page (see pages/usage.js).
     claude: [0.85, 0.47, 0.34],
     codex: [0.06, 0.64, 0.5],
+    grok: [0.93, 0.94, 0.96],
     agy: [0.3, 0.55, 1],
     warn: Palette.ORANGE,
     break: Palette.BLUE,
     calendar: Palette.BLUE,
 };
 
+/** An [r, g, b] colour, each 0 to 1, as CSS rgba(). */
 const css = ([r, g, b], alpha = 1) =>
     `rgba(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)}, ${alpha})`;
 
-/** The badge behind an icon, lit from the top in the alert's colour like iOS's; grey when neutral. */
+/** The badge behind an icon, lit from the top in the alert's colour; grey when neutral. */
 function badgeStyle(rgb, neutral) {
     const [top, bottom] = neutral ? [0.16, 0.08] : [0.34, 0.16];
     const base = neutral ? [1, 1, 1] : rgb;
@@ -65,10 +75,21 @@ function badgeStyle(rgb, neutral) {
         `background-gradient-end: ${css(base, bottom)};`;
 }
 
+/** Styles `actor` and everything in it now: St styles only what is on screen, and a button not yet shown
+ * measures in the default font, wider than it will be. */
+function styleNow(actor) {
+    if (actor instanceof St.Widget)
+        actor.ensure_style();
+    for (const child of actor.get_children())
+        styleNow(child);
+}
+
+/** An alert's content inside the island: badge, texts, and the buttons that answer. */
 export const PeekView = GObject.registerClass({
     // The × on its icon (see `showClose`).
     Signals: {'close-requested': {}},
 }, class PeekView extends St.Widget {
+    /** Builds every piece once; each alert only picks which are shown. */
     _init() {
         super._init({style_class: 'isle-peek', layout_manager: new Clutter.BinLayout()});
 
@@ -76,7 +97,9 @@ export const PeekView = GObject.registerClass({
         this._row = new St.BoxLayout({
             style_class: 'isle-peek-row',
             x_expand: true,
-            x_align: Clutter.ActorAlign.CENTER,
+            // Filling the island, which is an even width: a spare pixel goes to the texts, so the badge and
+            // the value or button stay as far from the edges, not half a pixel off.
+            x_align: Clutter.ActorAlign.FILL,
             y_expand: true,
         });
         this.add_child(this._row);
@@ -128,13 +151,21 @@ export const PeekView = GObject.registerClass({
         this._title.clutter_text.line_wrap = false;
         this._titleLines = 1;
         this._lineHeight = 0;
+        // A notification's words may wrap to a second line too (see `setAlert`).
+        wrapLines(this._subtitle, Pango.EllipsizeMode.END);
+        this._subtitle.clutter_text.line_wrap = false;
+        this._subtitleLines = 1;
+        this._subtitleLineHeight = 0;
         // What an agent wants to run, and the answers to give it.
         this._code = new St.Label({style_class: 'isle-peek-code', x_align: Clutter.ActorAlign.START});
         // Whole, over as many lines as it takes: what is allowed is all there to read.
         this._code.clutter_text.set({line_wrap: true, line_wrap_mode: Pango.WrapMode.WORD_CHAR,
             ellipsize: Pango.EllipsizeMode.NONE});
         texts.add_child(this._code);
-        this._actions = new St.BoxLayout({style_class: 'isle-peek-actions'});
+        // Its buttons small, each as wide as its label, from where the texts start; whole, a line below if need be.
+        const wrap = new WrapLayout();
+        this._actions = new St.Widget({style_class: 'isle-peek-actions', layout_manager: wrap, x_expand: true});
+        onUiScale(this._actions, scale => (wrap.spacing = ACTIONS_SPACING * scale));
         texts.add_child(this._actions);
         this._answered = new St.BoxLayout({style_class: 'isle-peek-answered', visible: false});
         this._answeredIcon = new St.Icon({icon_size: 12, y_align: Clutter.ActorAlign.CENTER});
@@ -178,28 +209,34 @@ export const PeekView = GObject.registerClass({
 
     /** What the alert shown last was, so one updating in place doesn't animate in again. */
     _forget() {
-        this._ringKey = this._levelKey = this._volumeKey = this._motionKey = null;
+        this._ringKey = this._levelKey = this._volumeKey = this._motionKey = this._underKey = null;
     }
 
-    /** Fills the view from an alert (see the top of this file); `onDone` runs after its button did its job.
-     * `fresh` for one just shown, though its key is the last one's (a second "Charging"). */
-    setAlert(alert, onDone = null, {fresh = false} = {}) {
+    /** Fills the view from an alert; `onDone` runs after its button did its job. `fresh`: shown anew under the
+     * last one's key (a second "Charging"); `under`: its one button goes under the words, as two or three do. */
+    setAlert(alert, onDone = null, {fresh = false, under = false} = {}) {
         if (fresh)
             this._forget();
-        const rgb = TONE_COLORS[alert.tone] ?? TONE_COLORS.neutral;
+        // Its button stays under its words while it updates in place, the same button under the pointer.
+        under = Boolean(alert.action) && (under || alert.key === this._underKey);
+        const rgb = Theme.semantic(TONE_COLORS[alert.tone] ?? TONE_COLORS.neutral);
         const color = css(rgb);
         const gicon = alert.gicon ? ownIcon(alert.gicon) : icon(alert.icon ?? 'dialog-information-symbolic');
         const hasRing = alert.ring !== undefined && alert.ring !== null;
 
-        this._asks = Boolean(alert.actions?.length);
+        const action = under ? null : alert.action;
+        // Moved under, it keeps its colour (a Join stays blue).
+        const actions = alert.actions ?? (under ? [{...alert.action, accent: alert.action.primary}] : []);
+        this._asks = actions.length > 0;
         this._shown = alert;
-        // One that asks reads from the left, like a dialog, the assistant level with its title; the others sit centred.
+        // One that asks reads from the left, like a dialog, the assistant level with its title.
         const decision = this._asks || Boolean(alert.code);
-        this._row.x_align = decision ? Clutter.ActorAlign.FILL : Clutter.ActorAlign.CENTER;
-        this._row.style_class = decision ? 'isle-peek-row isle-peek-row-asks' : 'isle-peek-row';
+        this._lit = Boolean(alert.glow);
+        this._row.style_class = decision ? `isle-peek-row isle-peek-row-asks${this._lit ? ' isle-peek-row-glow' : ''}` : 'isle-peek-row';
         this._lead.y_align = this._texts.y_align = decision ? Clutter.ActorAlign.START : Clutter.ActorAlign.CENTER;
         // One that asks is answered with its own buttons; the volume and the like pass by themselves.
-        this._closable = !decision && !alert.transient;
+        // From what it is, not where its button went: one moved under its words keeps its ×.
+        this._closable = alert.closable ?? (!(alert.actions?.length || alert.code) && !alert.transient);
         if (!this._closable)
             this.showClose(false);
         if (alert.bot) {
@@ -257,12 +294,14 @@ export const PeekView = GObject.registerClass({
             playMotion(moving, alert.motion, {delay: RING_DELAY});
         this._motionKey = motionKey;
 
+        // The texts' widest: less where it is lit, with more room round it.
+        const textWidth = decision ? DECISION_TEXT_WIDTH - (this._lit ? 2 * (GLOW_PADDING - PADDING) : 0) : TITLE_WRAP_WIDTH;
         // A few lines at most for a title that may run long (an answer, a reminder); the island widens and
         // grows by the line. Cut here: with wrapping, Pango's own … would keep the first line alone.
         let title = alert.title ?? '';
         this._titleLines = 1;
         if (alert.titleLines > 1)
-            [title, this._titleLines, this._lineHeight] = this._fitLines(title, alert.titleLines, px(decision ? DECISION_TEXT_WIDTH : TITLE_WRAP_WIDTH));
+            [title, this._titleLines, this._lineHeight] = this._fitLines(title, alert.titleLines, px(textWidth));
         const wrap = this._titleLines > 1;
         this._title.clutter_text.line_wrap = wrap;
         this._title.clutter_text.ellipsize = wrap ? Pango.EllipsizeMode.NONE : Pango.EllipsizeMode.END;
@@ -270,25 +309,46 @@ export const PeekView = GObject.registerClass({
         this._title.height = wrap ? Math.ceil(this._titleLines * this._lineHeight) : -1;
         this._title.text = title;
         // Cut short: what says how to read it all.
-        const subtitle = (title !== (alert.title ?? '') && alert.cutSubtitle) || alert.subtitle;
-        this._subtitle.text = subtitle ?? '';
+        let subtitle = (title !== (alert.title ?? '') && alert.cutSubtitle) || alert.subtitle || '';
+        // A notification's words may take a second line before they are cut.
+        this._subtitleLines = 1;
+        if (alert.subtitleLines > 1 && subtitle) {
+            [subtitle, this._subtitleLines, this._subtitleLineHeight] = this._fitLines(subtitle, alert.subtitleLines,
+                px(textWidth), this._subtitle);
+        }
+        const wrapSubtitle = this._subtitleLines > 1;
+        this._subtitle.clutter_text.line_wrap = wrapSubtitle;
+        this._subtitle.clutter_text.ellipsize = wrapSubtitle ? Pango.EllipsizeMode.NONE : Pango.EllipsizeMode.END;
+        this._subtitle.height = wrapSubtitle ? Math.ceil(this._subtitleLines * this._subtitleLineHeight) : -1;
+        this._subtitle.text = subtitle;
         this._subtitle.visible = Boolean(subtitle);
 
         this._code.text = alert.code ?? '';
         this._code.visible = Boolean(alert.code);
-        this._showActions(alert.actions ?? [], onDone);
+        this._showActions(actions, onDone, alert.key, fresh);
 
-        this._actionButton?.destroy();
-        this._actionButton = null;
+        // The same alert updating in place with the same button keeps it, under the pointer (see `_showActions`).
+        const actionLabel = action ? `${action.primary ? '*' : ''}${action.label}` : null;
+        const keepButton = Boolean(this._actionButton) && !fresh && alert.key === this._actionKey && actionLabel === this._actionLabel;
+        if (!keepButton) {
+            this._actionButton?.destroy();
+            this._actionButton = null;
+        }
+        this._shownAction = action;
+        this._actionDone = onDone;
+        this._actionKey = alert.key;
+        this._actionLabel = actionLabel;
         this._count = null;
-        if (alert.level === undefined || alert.level === null || alert.action)
+        if (alert.level === undefined || alert.level === null || action)
             this._levelKey = null;
-        if (alert.action) {
+        if (action) {
             // The one thing to do now (Join) in the accent colour, as a default button.
-            this._actionButton = pillButton(alert.action.label, alert.action.primary ? 'isle-pill-small isle-pill-accent' : 'isle-pill-small', () => {
-                alert.action.callback();
-                onDone?.();
-            });
+            if (!keepButton) {
+                this._actionButton = pillButton(action.label, action.primary ? 'isle-pill-small isle-pill-accent' : 'isle-pill-small', () => {
+                    this._shownAction.callback();
+                    this._actionDone?.();
+                });
+            }
             this._setChild(this._accessory, this._actionButton);
         } else if (alert.level !== undefined && alert.level !== null) {
             if (alert.key !== this._levelKey)
@@ -314,26 +374,65 @@ export const PeekView = GObject.registerClass({
         } else {
             this._setChild(this._accessory, null);
         }
+        // Fitted once the island measures it, on the stage and styled (see `_fit`).
+        this._unfitted = alert.action || alert.actions?.length ? {alert, onDone, under} : null;
     }
 
-    // The answers an alert offers (Deny, Allow, Always…), each {label, primary, answer: allow | deny, callback}:
-    // the callback runs at once; an allow or deny then shows a moment, the assistant hopping or shaking.
-    _showActions(actions, onDone) {
+    /** Its button, placed once it can be measured: one beside words that would be cut goes under them. */
+    _fit() {
+        if (!this._unfitted || !this.get_stage())
+            return;
+        const {alert, onDone, under} = this._unfitted;
+        this._unfitted = null;
+        styleNow(this._row);
+        if (!under && this._shownAction && this._row.get_preferred_width(-1)[1] > px(MAX_WIDTH)) {
+            this._underKey = alert.key;
+            this.setAlert(alert, onDone, {under: true});
+            this._unfitted = null;
+            styleNow(this._row);
+        }
+    }
+
+    // The answers an alert offers, each {label, primary, answer: allow | deny, callback}; an allow or deny shows a moment.
+    // The same alert updating in place (`key`) with the same buttons keeps them, armed and under the pointer.
+    _showActions(actions, onDone, key = null, fresh = true) {
+        const labels = actions.map(action => `${action.primary ? '*' : ''}${action.label}`).join('\n');
+        const kept = !fresh && key !== null && key === this._actionsKey && labels === this._actionLabels && !this._answerTimer &&
+            this._actions.visible;
+        this._shownActions = actions;
+        this._actionsDone = onDone;
+        this._actionsKey = key;
+        this._actionLabels = labels;
+        if (kept)
+            return;
         this._clearAnswer();
         this._actions.destroy_all_children();
         this._actions.visible = actions.length > 0;
         this._answered.visible = false;
         this._actionsShownAt = GLib.get_monotonic_time();
-        for (const action of actions) {
-            const style = action.primary ? 'isle-pill-small isle-peek-action isle-pill-white' : 'isle-pill-small isle-peek-action';
-            this._actions.add_child(pillButton(action.label, style, () => this._answer(action, onDone)));
-        }
+        actions.forEach((action, i) => {
+            const style = action.accent ? 'isle-pill-small isle-peek-action isle-pill-accent'
+                : action.primary ? `isle-pill-small isle-peek-action isle-pill-white${action.answer ? ' isle-pill-decision' : ''}`
+                    : 'isle-pill-small isle-peek-action';
+            this._actions.add_child(pillButton(action.label, style, () => this._answer(this._shownActions[i], this._actionsDone)));
+        });
     }
 
+    /** How wide the alert would be for its buttons on one line: theirs, and the room round its texts. */
+    _actionsWidth() {
+        if (!this._actions.visible)
+            return 0;
+        const [, buttons] = this._actions.get_preferred_width(-1);
+        const [, lead] = this._lead.get_preferred_width(-1);
+        const row = this._row.get_theme_node();
+        return buttons + row.get_padding(St.Side.LEFT) + row.get_padding(St.Side.RIGHT) + row.get_length('spacing') + lead;
+    }
+
+    /** Runs a button's callback, then shows the answer a moment; a press too soon after the buttons appeared is ignored. */
     _answer(action, onDone) {
-        // A click meant for what was there a moment ago never answers what just appeared.
+        // A click meant for what was there a moment ago never presses what just appeared ("Accept").
         const fresh = GLib.get_monotonic_time() - (this._actionsShownAt ?? 0) < ARMED_AFTER_MS * 1000;
-        if (this._answerTimer || (action.answer && fresh))
+        if (this._answerTimer || fresh)
             return;
         // Answered: putting it away after says nothing more (see `onDismissed`).
         if (this._shown)
@@ -344,7 +443,7 @@ export const PeekView = GObject.registerClass({
             return;
         }
         const allowed = action.answer === 'allow';
-        this._bot.badge = {color: allowed ? Palette.GREEN : Palette.RED, glyph: allowed ? 'check' : 'cross'};
+        this._bot.badge = {color: Theme.semantic(allowed ? Palette.GREEN : Palette.RED), glyph: allowed ? 'check' : 'cross'};
         this._bot.form = allowed ? 'success' : 'attentive';
         this._bot.play(allowed ? 'hop' : 'shake');
         this._answeredIcon.gicon = icon(allowed ? 'isle-check-symbolic' : 'isle-close-symbolic');
@@ -361,6 +460,7 @@ export const PeekView = GObject.registerClass({
         });
     }
 
+    /** Stops a shown answer's timer. */
     _clearAnswer() {
         if (this._answerTimer)
             GLib.source_remove(this._answerTimer);
@@ -389,23 +489,29 @@ export const PeekView = GObject.registerClass({
 
     /** The height below the top bar this alert needs: less with a title alone. */
     get preferredHeight() {
+        this._fit();
         // One that asks: as tall as its lines, code and buttons, with even room above and below.
         if (this._asks || this._code.visible) {
-            const [, natural] = this._texts.get_preferred_height(px(DECISION_TEXT_WIDTH));
-            return Math.round(Math.max(px(BOT_SIZE + 24), natural + px(26)));
+            // Its texts as wide as the island leaves them: a narrower one wraps its code sooner.
+            const [, row] = this._row.get_preferred_width(-1);
+            const [, texts] = this._texts.get_preferred_width(-1);
+            const [, natural] = this._texts.get_preferred_height(this.preferredWidth - (row - texts));
+            const [, lead] = this._lead.get_preferred_height(-1);
+            return Math.round(Math.max(lead, natural) + px(2 * (this._lit ? GLOW_PADDING : PADDING)));
         }
-        const height = px(this._subtitle.visible ? HEIGHT.two : HEIGHT.one);
-        return height + Math.round((this._titleLines - 1) * this._lineHeight);
+        return px(HEIGHT) + Math.round((this._titleLines - 1) * this._lineHeight +
+            (this._subtitleLines - 1) * this._subtitleLineHeight);
     }
 
     /** `text` cut to whole words that fit in `max` lines `width` (stage px) wide, with … if cut (by letters when one word is
      * too long: a link): [text, lines, line height]. */
-    _fitLines(text, max, width) {
-        const layout = Pango.Layout.new(this._title.get_pango_context());
-        layout.set_font_description(this._title.get_theme_node().get_font());
-        layout.set_attributes(this._title.clutter_text.get_attributes());
+    _fitLines(text, max, width, label = this._title) {
+        const layout = Pango.Layout.new(label.get_pango_context());
+        layout.set_font_description(label.get_theme_node().get_font());
+        layout.set_attributes(label.clutter_text.get_attributes());
         layout.set_width(width * Pango.SCALE);
         layout.set_wrap(Pango.WrapMode.WORD_CHAR);
+        // Whether `candidate` takes no more than `max` lines.
         const fits = candidate => {
             layout.set_text(candidate, -1);
             return layout.get_line_count() <= max;
@@ -449,14 +555,21 @@ export const PeekView = GObject.registerClass({
 
     /** The width the island should have for this alert. */
     get preferredWidth() {
-        if (this._asks || this._code.visible)
-            return px(DECISION_WIDTH);
+        this._fit();
         const [, natural] = this._row.get_preferred_width(-1);
-        if (this._titleLines > 1)
+        if (this._asks || this._code.visible) {
+            // Its words up to the usual width; its buttons, whole, a little wider if they need it.
+            const widest = Math.max(px(DECISION_WIDTH), Math.min(px(ACTIONS_WIDTH), this._actionsWidth()));
+            if (this._titleLines > 1 || this._subtitleLines > 1)
+                return Math.round(widest);
+            return Math.round(Math.min(widest, natural));
+        }
+        if (this._titleLines > 1 || this._subtitleLines > 1)
             return px(MAX_WIDTH);
-        return Math.round(Math.min(px(MAX_WIDTH), Math.max(px(MIN_WIDTH), natural)));
+        return Math.round(Math.min(px(MAX_WIDTH), natural));
     }
 
+    /** Puts `child` in `bin`; no child hides the bin. */
     _setChild(bin, child) {
         if (bin.child !== child)
             bin.child = child;
@@ -464,6 +577,7 @@ export const PeekView = GObject.registerClass({
         bin.visible = child !== null;
     }
 
+    /** Frees the pieces no alert is showing right now. */
     _onDestroy() {
         this._clearAnswer();
         // Pieces not currently shown are not children and must be freed here.

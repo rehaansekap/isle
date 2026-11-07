@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
-//! Waking from suspend, from logind: the clock's waits re-check the time then (see `clock::resumed`),
-//! so they can sleep until their deadline instead of waking every few seconds to look. And whether
-//! the screen is locked, for work nobody would see meanwhile (see `locked`).
+//! Waking from suspend, from logind, so the clock's waits can sleep to their deadline (see `clock::resumed`),
+//! and whether the screen is locked, for work nobody would see meanwhile (see `locked`).
 
 use std::sync::LazyLock;
 
@@ -34,6 +34,7 @@ pub fn sleeps() -> watch::Receiver<u64> {
     SLEEPS.subscribe()
 }
 
+/// Counts logind's sleeps and wakes, and has the clock re-check its waits on each wake.
 pub async fn watch(bus: Connection) -> anyhow::Result<()> {
     let rule = MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
@@ -61,6 +62,7 @@ pub async fn watch_lock(bus: Connection) -> anyhow::Result<()> {
     result
 }
 
+/// Follows `LockedHint` on the user's graphical session; with no session, waits forever.
 async fn follow_lock(bus: &Connection) -> anyhow::Result<()> {
     // isled runs as a user service, outside the session: "auto" is then the user's graphical one.
     let reply = bus
@@ -106,6 +108,7 @@ async fn follow_lock(bus: &Connection) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Publishes the lock state, waking watchers only when it changes.
 fn set_locked(locked: bool) {
     LOCKED.send_if_modified(|was| std::mem::replace(was, locked) != locked);
 }

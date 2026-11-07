@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
-//! `isle-whisper`: speech to text for Isle's voice assistant, which isled runs while the user
-//! speaks. Once the model is loaded it says `{"ready": true, "device": …}`; then each line
-//! `{"audio": path to raw 16 kHz mono s16le}` is answered with `{"text"}` or `{"error"}`.
+//! `isle-whisper`: speech to text for isled. Says `{"ready": true, "device": …}` once loaded, then
+//! answers each `{"audio": path}` line (raw 16 kHz mono s16le) with `{"text"}` or `{"error"}`.
 
 mod gpu;
 mod protocol;
@@ -24,6 +24,7 @@ Usage: isle-whisper --model <tiny|base|small|medium> [--language <codes>] [--cpu
 It reads {\"audio\": \"path\"} lines (raw 16 kHz mono s16le) and answers {\"text\"} or {\"error\"}.
 ISLE_WHISPER_THREADS sets the processor threads (default: half the cores).";
 
+/// What to run with, from the command line.
 #[derive(Debug, Default, PartialEq)]
 struct Args {
     model: String,
@@ -32,12 +33,14 @@ struct Args {
     probe: bool,
 }
 
+/// What the command line asked for.
 enum Parsed {
     Run(Args),
     Help,
     Version,
 }
 
+/// Reads the arguments; the model is `small` unless one is named.
 fn parse(mut args: impl Iterator<Item = String>) -> Result<Parsed, String> {
     let mut parsed = Args {
         model: "small".into(),
@@ -68,6 +71,7 @@ fn threads() -> i32 {
         })
 }
 
+/// Where `isle-setup-voice` put the models: `$XDG_DATA_HOME`, else `~/.local/share`.
 fn models_dir() -> PathBuf {
     std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
@@ -85,17 +89,20 @@ fn processor_supported() -> bool {
         && std::arch::is_x86_feature_detected!("f16c")
 }
 
+/// Other processors: let ggml try.
 #[cfg(not(target_arch = "x86_64"))]
 fn processor_supported() -> bool {
     true
 }
 
+/// One JSON line to isled.
 fn say(line: &str) {
     let mut out = std::io::stdout().lock();
     // isled gone: nothing left to tell.
     let _ = writeln!(out, "{line}").and_then(|()| out.flush());
 }
 
+/// Loads the model, then transcribes one request per line until isled closes stdin.
 fn main() -> ExitCode {
     let args = match parse(std::env::args().skip(1)) {
         Ok(Parsed::Run(args)) => args,
@@ -153,7 +160,7 @@ fn main() -> ExitCode {
             })
             .and_then(|bytes| model.transcribe(&protocol::samples(&bytes), &args.language));
         say(&match reply {
-            Ok(text) => protocol::text(&text),
+            Ok(heard) => protocol::text(&heard),
             Err(err) => protocol::error(&err),
         });
     }

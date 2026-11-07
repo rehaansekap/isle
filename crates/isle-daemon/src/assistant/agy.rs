@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! The Antigravity CLI (`agy`) in stream-json print mode: one process per voice session,
 //! started while the user speaks so its start-up is hidden, and one turn per request.
@@ -19,10 +20,8 @@ use tokio::sync::mpsc::UnboundedSender;
 use super::answer::{Answer, SCHEMA};
 use super::child::{self, Events, Group};
 
-/// agy may only search the web and read pages; commands and file changes go through Isle's actions,
-/// which the user sees (agy's own settings may let it run anything without asking). The hook gets
-/// `{"toolCall":{"args":{…},"name":"…"},"transcriptPath":…}`: the tool's own name is the one that closes
-/// `toolCall`, so a "name" inside its arguments cannot pass for it; any other layout is refused.
+/// agy may only search and read the web: its own settings may let it run anything unasked. The tool's name is
+/// the one just before `transcriptPath`, so a "name" in its arguments cannot pass; other layouts are refused.
 const HOOKS: &str = r#"{"isle-guard": {"PreToolUse": [{"matcher": "*", "hooks": [{"timeout": 5, "command":
 "grep -qE '\"name\": *\"(search_web|read_url_content|finish|wait)\" *[}] *, *\"transcriptPath\"' && echo '{\"decision\":\"allow\"}' || echo '{\"decision\":\"deny\",\"reason\":\"Isle allows only web search and reading pages; answer with actions instead.\"}'"}]}]}}"#;
 
@@ -45,13 +44,62 @@ const PER_CONVERSATION: &[&str] = &[
     "implicit",
 ];
 
-/// Where agy keeps its sign-in, under its home.
+/// Where agy keeps its sign-in, under its home: before agy 1.4, and since (beside the system keyring).
 pub const LOGIN: &str = ".gemini/antigravity-cli/antigravity-oauth-token";
+const STANDALONE_LOGIN: &str = ".gemini/jetski-standalone-oauth-token";
+
+/// Whether the user signed in to agy in `home`, as either version keeps it.
+pub fn signed_in_at(home: &Path) -> bool {
+    [LOGIN, STANDALONE_LOGIN]
+        .iter()
+        .any(|login| home.join(login).exists())
+}
 
 /// Links Isle's agy home to the user's agy sign-in, so signing in once (in `user`'s home) is enough
 /// (see sign_in.rs).
 fn link_login(user: &Path, isle: &Path) {
-    super::sign_in::share(&user.join(LOGIN), &isle.join(LOGIN));
+    for login in [LOGIN, STANDALONE_LOGIN] {
+        super::sign_in::share(&user.join(login), &isle.join(login));
+    }
+}
+
+/// What `agy models` lists for this account (`id<TAB>name` lines): run in Isle's home for agy, as every
+/// agy here, and asking nothing of the AI.
+pub async fn models(program: &Path) -> anyhow::Result<String> {
+    use tokio::io::AsyncReadExt;
+    let user = dirs::home_dir();
+    if let Some(user) = &user {
+        link_login(user, &home());
+    }
+    std::fs::create_dir_all(home())?;
+    let mut command = Command::new(program);
+    command
+        .arg("models")
+        .current_dir(home())
+        .env("HOME", home())
+        .env_remove("XDG_CONFIG_HOME")
+        .env_remove("XDG_DATA_HOME")
+        .env_remove("XDG_STATE_HOME")
+        .env_remove("XDG_CACHE_HOME")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = child::spawn(&mut command).context("could not start agy")?;
+    let (mut stdout, mut stderr) = (String::new(), String::new());
+    let mut out = child.stdout.take().expect("piped stdout");
+    let mut err = child.stderr.take().expect("piped stderr");
+    let (read, _) = tokio::join!(
+        out.read_to_string(&mut stdout),
+        err.read_to_string(&mut stderr)
+    );
+    read?;
+    let status = child.wait().await?;
+    // It may have renewed its sign-in meanwhile: the user's own agy gets it (see sign_in.rs).
+    if let Some(user) = &user {
+        link_login(user, &home());
+    }
+    anyhow::ensure!(status.success(), "agy models failed: {}", stderr.trim());
+    Ok(stdout)
 }
 
 /// Deletes the conversations last used before `today`, all of a conversation's files together.
@@ -59,6 +107,7 @@ pub fn prune(today: NaiveDate) {
     prune_in(&store(), today);
 }
 
+/// `prune` on a given store folder, so tests can use a temporary one.
 fn prune_in(store: &Path, today: NaiveDate) {
     let mut last_used: HashMap<String, (NaiveDate, Vec<PathBuf>)> = HashMap::new();
     for dir in PER_CONVERSATION {
@@ -111,6 +160,7 @@ pub fn forget(id: &str) {
     }
 }
 
+/// Deletes a conversation's file or folder, logging anything but "already gone".
 fn remove(path: &PathBuf) {
     let removed = if path.is_dir() {
         std::fs::remove_dir_all(path)
@@ -137,6 +187,7 @@ impl Drop for Agy {
     }
 }
 
+/// A running agy for one voice session, read a turn at a time.
 pub struct Agy {
     _child: Group,
     stdin: ChildStdin,
@@ -147,6 +198,7 @@ pub struct Agy {
 }
 
 impl Agy {
+    /// Starts agy in its own home with Isle's hook in `workspace`, resuming `resume` if given.
     pub(super) fn start_program(
         program: &Path,
         model: &str,
@@ -224,6 +276,7 @@ impl Agy {
         })
     }
 
+    /// Sends the prompt and reads events until the result, passing tool steps to `activity`.
     async fn turn(
         &mut self,
         prompt: &str,
@@ -284,6 +337,7 @@ fn step(update: &Value) -> Option<String> {
     }
 }
 
+/// The answer from agy's result event, or its error.
 fn parse_result(result: &Value) -> anyhow::Result<Answer> {
     if result["status"] != "SUCCESS" {
         let error = result["error"].as_str().unwrap_or("agy failed");
@@ -300,6 +354,21 @@ fn parse_result(result: &Value) -> anyhow::Result<Answer> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn either_versions_sign_in_counts() {
+        let home = std::env::temp_dir().join(format!("isle-agy-login-{}", std::process::id()));
+        std::fs::create_dir_all(home.join(".gemini/antigravity-cli")).unwrap();
+        assert!(!signed_in_at(&home));
+        // agy 1.4 and later.
+        std::fs::write(home.join(STANDALONE_LOGIN), "token").unwrap();
+        assert!(signed_in_at(&home));
+        std::fs::remove_file(home.join(STANDALONE_LOGIN)).unwrap();
+        // Before.
+        std::fs::write(home.join(LOGIN), "token").unwrap();
+        assert!(signed_in_at(&home));
+        std::fs::remove_dir_all(&home).unwrap();
+    }
     use super::*;
 
     #[test]

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 // The default sound output: its volume, mute state and the outputs to choose from.
 // Uses the same mixer as GNOME's Quick Settings, so both always agree.
@@ -13,6 +14,7 @@ const MAX_DEVICE_ID = 256;
 /** Signals: `changed` (): volume, mute, outputs or the active output changed; `outputs-changed` (): only
  * the outputs or the active one, not volume or mute (many times a second while a slider moves). */
 export class AudioOutputs extends Signals.EventEmitter {
+    /** Picks up the outputs GNOME already knows, then follows the mixer. */
     constructor() {
         super();
         this._mixer = getMixerControl();
@@ -51,6 +53,7 @@ export class AudioOutputs extends Signals.EventEmitter {
         return this._sink.volume / this._mixer.get_vol_max_norm();
     }
 
+    /** Sets the level, unmuting when raised above 0. */
     set volume(fraction) {
         if (!this._sink)
             return;
@@ -61,6 +64,7 @@ export class AudioOutputs extends Signals.EventEmitter {
         this._sink.push_volume();
     }
 
+    /** Whether the default output is muted; false when there is none. */
     get muted() {
         return this._sink?.is_muted ?? false;
     }
@@ -70,6 +74,7 @@ export class AudioOutputs extends Signals.EventEmitter {
         return Boolean(this._sink);
     }
 
+    /** Mutes or unmutes the default output. */
     toggleMuted() {
         this._sink?.change_is_muted(!this.muted);
     }
@@ -99,17 +104,20 @@ export class AudioOutputs extends Signals.EventEmitter {
             .sort((a, b) => b.active - a.active || a.name.localeCompare(b.name));
     }
 
+    /** Makes the output with `id` the default, as picked in the output list. */
     activate(id) {
         const device = this._devices.get(id);
         if (device)
             this._mixer.change_output(device);
     }
 
+    /** Id of the output the default sink plays on, or null. */
     _activeId() {
         const sink = this._mixer.get_default_sink();
         return sink ? this._mixer.lookup_device_from_stream(sink)?.get_id() ?? null : null;
     }
 
+    /** Moves the volume and mute listeners to the current default sink. */
     _watchSink() {
         this._sinkIds.forEach(id => this._sink.disconnect(id));
         this._sinkIds = [];
@@ -121,11 +129,13 @@ export class AudioOutputs extends Signals.EventEmitter {
         this._outputsChanged();
     }
 
+    /** An output change is a change of everything shown too. */
     _outputsChanged() {
         this.emit('changed');
         this.emit('outputs-changed');
     }
 
+    /** Lets go of the mixer and the sink. */
     destroy() {
         // Tell no one about changes made while tearing down.
         this.disconnectAll();

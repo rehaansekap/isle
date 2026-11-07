@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Points the PKGBUILD at a published release and writes .SRCINFO, ready to push to the AUR:
-#   packaging/aur/update.sh 1.2.3
-# The checksum comes from the release's .sha256. .SRCINFO needs makepkg (on Arch, or in Docker).
+# Copyright (C) 2026 zickrian
+# Points the PKGBUILD at a published release (packaging/aur/update.sh 1.2.3) and writes .SRCINFO for the AUR.
+# The checksum comes from the release's .sha256; .SRCINFO needs makepkg, on Arch or in Docker.
 set -euo pipefail
 
 VERSION="${1:?usage: $0 <version>}"

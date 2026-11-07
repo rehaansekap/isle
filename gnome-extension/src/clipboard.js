@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 // Clipboard history: hands each copy to isled, which keeps the list (Clipboard1 in docs/dbus-api.md),
 // and puts items back or pastes them. Lives here: only GNOME Shell can read every app's clipboard on Wayland.
@@ -15,6 +16,9 @@ import {clutterBackend} from './compat.js';
 const CLIPBOARD = St.ClipboardType.CLIPBOARD;
 /** Set by password managers (KeePassXC and others) on secrets they copy. */
 const SECRET_HINT = 'x-kde-passwordManagerHint';
+/** A secret that could not be read stands for any copy this soon after it (µs): better one copy left out. */
+const UNREAD_SECRET_US = 30 * 1000 * 1000;
+const UNREAD = 'unread';
 /** How Files puts copied files on the clipboard. */
 const FILES_TYPE = 'x-special/gnome-copied-files';
 const URI_LIST_TYPE = 'text/uri-list';
@@ -37,6 +41,7 @@ const LATIN_LAYOUTS = ['us', 'gb', 'id', 'de', 'fr', 'es', 'it', 'pt', 'br', 'nl
     'dk', 'fi', 'is', 'pl', 'cz', 'sk', 'hu', 'ro', 'hr', 'si', 'tr', 'ee', 'lv', 'lt', 'ie', 'ca', 'latam', 'au',
     'za', 'nz', 'ph', 'my', 'vn', 'epo'];
 
+/** Whether `window` is a terminal, which pastes with Ctrl+Shift+V. */
 export function isTerminal(window) {
     const app = Shell.WindowTracker.get_default().get_window_app(window);
     const names = [window.get_wm_class(), window.get_wm_class_instance(), app?.get_id()]
@@ -74,7 +79,9 @@ const KEY_LEFTCTRL = 29;
 const KEY_LEFTSHIFT = 42;
 const KEY_V = 47;
 
+/** Watches the clipboard for the history, and puts items back and pastes them. */
 export class ClipboardHistory {
+    /** Watches from the start; `enabled` decides whether a copy is kept. */
     constructor(daemon, settings) {
         this._daemon = daemon;
         this._settings = settings;
@@ -83,8 +90,9 @@ export class ClipboardHistory {
         this._ownCopy = false;
         this._timeouts = new Set();
         this._cancellable = new Gio.Cancellable();
-        /** The text last added: {id, at}, until something else is copied. */
+        /** The text last added, {id, at}, or a secret's salted hash, {secret}; until something else is copied. */
         this._lastText = null;
+        this._salt = GLib.uuid_string_random();
         // Made now: a new virtual device joins the seat a moment later, and drops the first paste.
         this._keyboard = clutterBackend().get_default_seat().create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
 
@@ -95,10 +103,12 @@ export class ClipboardHistory {
         });
     }
 
+    /** On in Settings, and its Shelf page in the island: nothing kept that can't be seen. */
     get enabled() {
-        return this._settings.get_boolean('clipboard-history');
+        return this._settings.get_boolean('clipboard-history') && !this._settings.get_strv('hidden-pages').includes('shelf');
     }
 
+    /** A copy was made: kept unless it is ours, a secret, or from an app the user left out. */
     _onCopied() {
         if (this._ownCopy) {
             this._ownCopy = false;
@@ -107,8 +117,10 @@ export class ClipboardHistory {
         if (!this.enabled)
             return;
         const mimetypes = this._clipboard.get_mimetypes(CLIPBOARD);
-        if (mimetypes.includes(SECRET_HINT))
+        if (mimetypes.includes(SECRET_HINT)) {
+            this._noteSecret(mimetypes);
             return;
+        }
         const app = Shell.WindowTracker.get_default().focus_app;
         // Windows without a desktop file get made-up ids ("window:5").
         const appId = app && !app.is_window_backed() ? app.get_id() : '';
@@ -138,7 +150,11 @@ export class ClipboardHistory {
         // Only the picture's address (a browser's Copy Image gives it as text too) yields to the picture.
         const address = mimetypes.includes(IMAGE_TYPE) && /^\s*(https?|data|file):\S*\s*$/.test(text);
         if (text.replaceAll('\0', '').trim() && !address) {
-            this._addText(text, appId);
+            const last = this._lastText;
+            const hash = last?.secret ? await last.secret : null;
+            const unread = hash === UNREAD && GLib.get_monotonic_time() - last.at < UNREAD_SECRET_US;
+            if (!last?.secret || (!unread && hash !== this._hash(text)))
+                this._addText(text, appId);
         } else if (mimetypes.includes(IMAGE_TYPE)) {
             const png = await this._read(IMAGE_TYPE, MAX_IMAGE_BYTES);
             if (png?.get_size() && !this._destroyed) {
@@ -150,6 +166,22 @@ export class ClipboardHistory {
         }
     }
 
+    // A secret is never kept, only its hash: when the password manager quits, GNOME puts back what it
+    // held as plain text, without the hint, and that copy must still be left out.
+    _noteSecret(mimetypes) {
+        const textType = TEXT_TYPES.find(type => mimetypes.includes(type));
+        const read = () => textType ? this._read(textType, MAX_TEXT_BYTES) : Promise.resolve(null);
+        // Read again once if it failed; still unread, the next copies a moment later are taken for it.
+        const secret = read().then(bytes => bytes ?? read()).then(bytes => bytes ? this._hash(decode(bytes)) : UNREAD);
+        this._lastText = {secret, at: GLib.get_monotonic_time()};
+    }
+
+    /** `text`'s hash, salted afresh each session: a secret can be recognised but not looked up. */
+    _hash(text) {
+        return GLib.compute_checksum_for_data(GLib.ChecksumType.SHA256, new TextEncoder().encode(this._salt + text));
+    }
+
+    /** Remembered as the last text, so a password manager clearing it soon after can take it out again. */
     async _addText(text, appId) {
         if (this._destroyed)
             return;
@@ -164,7 +196,8 @@ export class ClipboardHistory {
     _forgetSecret() {
         const last = this._lastText;
         this._lastText = null;
-        if (!last || Date.now() - last.at > SECRET_CLEARED_MS || this._destroyed)
+        // After a secret, nothing of the history's was on the clipboard to take out.
+        if (last?.id === undefined || Date.now() - last.at > SECRET_CLEARED_MS || this._destroyed)
             return;
         const item = (this._daemon.state.clipboard ?? []).find(other => other.id === last.id);
         if (item && !item.pinned)
@@ -266,6 +299,7 @@ export class ClipboardHistory {
         }
     }
 
+    /** A timeout that `destroy` removes if it hasn't run. */
     _later(ms, callback) {
         if (this._destroyed)
             return;
@@ -277,6 +311,7 @@ export class ClipboardHistory {
         this._timeouts.add(id);
     }
 
+    /** Stops reading, drops pending timeouts and frees the virtual keyboard. */
     destroy() {
         this._destroyed = true;
         this._cancellable.cancel();
@@ -288,6 +323,7 @@ export class ClipboardHistory {
     }
 }
 
+/** Clipboard bytes as text, UTF-8. */
 function decode(bytes) {
     return new TextDecoder().decode(bytes.get_data() ?? new Uint8Array());
 }

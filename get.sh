@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Installs the latest Isle release for the current user, with no building:
-#   curl -fsSL https://raw.githubusercontent.com/zickrian/isle/main/get.sh | bash
-#
-# ISLE_VERSION=1.0.5 picks a release; ISLE_PACKAGE=path/to/isle-….tar.gz installs a package already
-# downloaded; ISLE_FORCE=1 installs on a GNOME Shell version Isle was not made for.
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 zickrian
+# Installs the latest ready-built Isle release into the user's home folder, usually piped from curl.
+# ISLE_VERSION=1.0.5 picks a release, ISLE_PACKAGE=<tarball> installs a downloaded one, ISLE_FORCE=1 any GNOME.
 set -euo pipefail
 
 REPO="zickrian/isle"
@@ -12,9 +11,12 @@ ARCH="$(uname -m)"
 RETRIES=6
 RETRY_WAIT=20
 
+# A step's heading, in bold.
 say() { printf '\033[1m==> %s\033[0m\n' "$*"; }
+# Says what went wrong and stops.
 fail() { printf 'Isle: %s\n' "$*" >&2; exit 1; }
 
+# Turns away root, missing tools and a GNOME Shell outside 46 to 51 (unless ISLE_FORCE=1).
 check() {
     # Everything goes to your own home folder: sudo would put it in root's, where your desktop never looks.
     [ "$(id -u)" -ne 0 ] || fail "run this as yourself, without sudo; Isle installs to your own home folder."
@@ -88,6 +90,7 @@ find_package() {
     fail "no ready-built Isle for $ARCH; build it from source instead (see github.com/$REPO#other-ways-to-install)."
 }
 
+# Downloads and checks the package (or takes ISLE_PACKAGE), then runs its installer.
 main() {
     check
     WORK="$(mktemp -d)"

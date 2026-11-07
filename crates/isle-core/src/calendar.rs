@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! Isle's own calendar events, written in one line ("Dinner 8:00 pm").
 //! Times are local wall-clock times; desktop calendars come from GNOME Shell.
@@ -12,6 +13,7 @@ pub const CAPACITY: usize = 2000;
 /// A title is cut to this many characters.
 const MAX_TITLE_CHARS: usize = 200;
 
+/// One event of Isle's own, as saved and as sent to the extension.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Event {
     pub id: u64,
@@ -22,14 +24,29 @@ pub struct Event {
     pub start: Option<String>,
     /// End time on the same day as "HH:MM", when one was given.
     pub end: Option<String>,
+    /// A desktop calendar it waits to go to (`{calendar, uid}`), kept here while that one is out of
+    /// reach; the same iCalendar uid each try, so it never lands there twice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub send: Option<Send>,
 }
 
+/// Where an event of Isle's waits to be sent (see [`Event::send`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Send {
+    /// The desktop calendar's uid.
+    pub calendar: String,
+    /// The event's iCalendar uid there.
+    pub uid: String,
+}
+
+/// All of Isle's own events, kept sorted, with ids that never repeat.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Calendar {
     events: Vec<Event>,
     next_id: u64,
 }
 
+/// Why an event was not added: a day that does not exist, or nothing left but a time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AddError {
     BadDate,
@@ -54,6 +71,7 @@ impl Calendar {
             date: day.to_string(),
             start: parsed.start.map(format_time),
             end: parsed.end.map(format_time),
+            send: None,
         });
         self.sort();
         if self.events.len() > CAPACITY {
@@ -62,6 +80,18 @@ impl Calendar {
         Ok(self.next_id)
     }
 
+    /// Sets (or, with `None`, drops) where an event waits to be sent; returns whether it is there.
+    pub fn set_send(&mut self, id: u64, send: Option<Send>) -> bool {
+        let found = self.events.iter_mut().find(|event| event.id == id);
+        found.map(|event| event.send = send).is_some()
+    }
+
+    /// The events waiting to be sent to a desktop calendar.
+    pub fn waiting(&self) -> impl Iterator<Item = &Event> {
+        self.events.iter().filter(|event| event.send.is_some())
+    }
+
+    /// Deletes an event; returns whether it was there.
     pub fn remove(&mut self, id: u64) -> bool {
         let before = self.events.len();
         self.events.retain(|event| event.id != id);
@@ -81,6 +111,7 @@ impl Calendar {
         self.events.len() != before
     }
 
+    /// Puts events in day and start order, ties by when they were added.
     fn sort(&mut self) {
         // "HH:MM" sorts as text; `None` (all day) sorts first.
         self.events
@@ -97,6 +128,7 @@ struct Day {
 }
 
 impl Day {
+    /// Reads "YYYY-MM-DD" exactly; `None` for a day the month does not have.
     fn parse(text: &str) -> Option<Self> {
         let mut parts = text.split('-');
         let (year, month, day) = (parts.next()?, parts.next()?, parts.next()?);
@@ -134,6 +166,7 @@ impl Day {
 }
 
 impl std::fmt::Display for Day {
+    /// Back to "YYYY-MM-DD", zero-padded.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:04}-{:02}-{:02}", self.year, self.month, self.day)
     }
@@ -222,6 +255,7 @@ struct TimeWords {
 /// A time (or a range written as one word, "9-10am") starting at word `i`.
 /// A bare hour counts only when `bare_ok`.
 fn time_at(words: &[&str], i: usize, bare_ok: bool) -> Option<TimeWords> {
+    let all = words;
     let word = words.get(i)?.to_lowercase();
     let word = word.trim_end_matches([',', ';']);
     // "pm" as a word of its own: "7 pm".
@@ -234,6 +268,16 @@ fn time_at(words: &[&str], i: usize, bare_ok: bool) -> Option<TimeWords> {
         None => word.to_owned(),
     };
     let words = if suffix.is_some() { 2 } else { 1 };
+    // "1800" as 18:00: where a bare hour is, or last ("Dinner 1930", "Shift 1800 - 2200"), but not a
+    // year ("Reunion 2015") or a number in the title ("Room 1234 meeting").
+    let last = all
+        .get(i + words)
+        .is_none_or(|next| RANGE_WORDS.contains(&next.to_lowercase().as_str()));
+    let four_ok = bare_ok
+        || (last
+            && text
+                .parse::<u32>()
+                .is_ok_and(|n| !(2000..2060).contains(&n) && n % 5 == 0));
 
     // A range in one word: "9:00-9:15", "9-10am", "14.00–15.30"; not "1-2".
     if let Some((first, second)) = text.split_once(['-', '–', '—']) {
@@ -241,15 +285,17 @@ fn time_at(words: &[&str], i: usize, bare_ok: bool) -> Option<TimeWords> {
         if first.is_empty() || second.is_empty() || !(precise(first) || precise(second)) {
             return None;
         }
-        let end = clock(second, true)?;
+        let end = clock(second, true, false)?;
         // "7-9pm": the end's am/pm goes for the start too, unless that puts
         // the start after the end ("11-1pm").
         let meridiem = ["am", "pm"].into_iter().find(|m| second.ends_with(m));
         let start = match meridiem {
-            Some(meridiem) if !first.ends_with('m') => clock(&format!("{first}{meridiem}"), true)
-                .filter(|&start| start < end)
-                .or_else(|| clock(first, true)),
-            _ => clock(first, true),
+            Some(meridiem) if !first.ends_with('m') => {
+                clock(&format!("{first}{meridiem}"), true, false)
+                    .filter(|&start| start < end)
+                    .or_else(|| clock(first, true, false))
+            }
+            _ => clock(first, true, false),
         }?;
         return Some(TimeWords {
             start,
@@ -258,15 +304,15 @@ fn time_at(words: &[&str], i: usize, bare_ok: bool) -> Option<TimeWords> {
         });
     }
     Some(TimeWords {
-        start: clock(&text, bare_ok)?,
+        start: clock(&text, bare_ok, four_ok)?,
         end: None,
         words,
     })
 }
 
 /// Minutes after midnight for "13:30", "13.30", "1:30pm", "1pm", "12am",
-/// or a bare hour ("13") when `bare_ok`.
-fn clock(text: &str, bare_ok: bool) -> Option<u32> {
+/// a bare hour ("13") when `bare_ok`, or four digits ("1330") when `four_ok`.
+fn clock(text: &str, bare_ok: bool, four_ok: bool) -> Option<u32> {
     let (digits, meridiem) = if let Some(rest) = text.strip_suffix("am") {
         (rest, Some(false))
     } else if let Some(rest) = text.strip_suffix("pm") {
@@ -277,6 +323,9 @@ fn clock(text: &str, bare_ok: bool) -> Option<u32> {
     let (hour, minute) = match digits.split_once([':', '.']) {
         Some((hour, minute)) if minute.len() == 2 => (hour, Some(minute)),
         Some(_) => return None,
+        None if four_ok && digits.len() == 4 && digits.bytes().all(|b| b.is_ascii_digit()) => {
+            (&digits[..2], Some(&digits[2..]))
+        }
         None => (digits, None),
     };
     if hour.is_empty() || hour.len() > 2 || !hour.bytes().all(|b| b.is_ascii_digit()) {
@@ -304,7 +353,8 @@ fn clock(text: &str, bare_ok: bool) -> Option<u32> {
     (minute < 60).then_some(hour * 60 + minute)
 }
 
-fn format_time(minutes: u32) -> String {
+/// Minutes after midnight as "HH:MM".
+pub fn format_time(minutes: u32) -> String {
     format!("{:02}:{:02}", minutes / 60, minutes % 60)
 }
 
@@ -351,6 +401,16 @@ mod tests {
         );
         assert_eq!(read("Noon 12pm"), event("Noon", Some("12:00"), None));
         assert_eq!(read("Rapat jam 14"), event("Rapat", Some("14:00"), None));
+        assert_eq!(read("testing 1800"), event("testing", Some("18:00"), None));
+        assert_eq!(read("Dinner 1930"), event("Dinner", Some("19:30"), None));
+        assert_eq!(
+            read("Futsal jam 2000"),
+            event("Futsal", Some("20:00"), None)
+        );
+        assert_eq!(
+            read("Rapat pukul 0915"),
+            event("Rapat", Some("09:15"), None)
+        );
         assert_eq!(
             read("Rapat pukul 09.15"),
             event("Rapat", Some("09:15"), None)
@@ -389,6 +449,10 @@ mod tests {
         );
         // An end before the start is dropped, not swapped.
         assert_eq!(read("Late 22:00-01:00"), event("Late", Some("22:00"), None));
+        assert_eq!(
+            read("Shift 1800 - 2200"),
+            event("Shift", Some("18:00"), Some("22:00"))
+        );
     }
 
     #[test]
@@ -406,6 +470,15 @@ mod tests {
         );
         assert_eq!(read("Score 25:99"), event("Score 25:99", None, None));
         assert_eq!(read("Release v1.2"), event("Release v1.2", None, None));
+        // Four digits read as a time only last, and never as a year or an odd minute.
+        assert_eq!(read("Reunion 2015"), event("Reunion 2015", None, None));
+        assert_eq!(read("Expo 2030"), event("Expo 2030", None, None));
+        assert_eq!(
+            read("Room 1234 meeting"),
+            event("Room 1234 meeting", None, None)
+        );
+        assert_eq!(read("Code 1234"), event("Code 1234", None, None));
+        assert_eq!(read("Score 2575"), event("Score 2575", None, None));
         // Only the first time is read.
         assert_eq!(
             read("Meet 10:00 then 11:00"),
@@ -418,6 +491,27 @@ mod tests {
         assert_eq!(parse("  "), None);
         assert_eq!(parse("10:00"), None);
         assert_eq!(parse("at 9pm"), None);
+    }
+
+    #[test]
+    fn events_wait_to_be_sent_and_old_saves_still_load() {
+        let mut calendar = Calendar::default();
+        let id = calendar.add("2026-10-27", "Dinner 19:00").unwrap();
+        assert_eq!(calendar.waiting().count(), 0);
+        let send = Send {
+            calendar: "google".into(),
+            uid: "isle-1".into(),
+        };
+        assert!(calendar.set_send(id, Some(send.clone())));
+        assert_eq!(calendar.waiting().next().unwrap().send, Some(send));
+        assert!(calendar.set_send(id, None));
+        assert!(!calendar.set_send(id + 1, None));
+        assert_eq!(calendar.waiting().count(), 0);
+
+        let saved = r#"{"events":[{"id":1,"title":"Trip","date":"2026-10-21","start":null,"end":null}],"next_id":1}"#;
+        let loaded: Calendar = serde_json::from_str(saved).unwrap();
+        assert_eq!(loaded.events()[0].send, None);
+        assert!(!serde_json::to_string(&loaded).unwrap().contains("send"));
     }
 
     #[test]

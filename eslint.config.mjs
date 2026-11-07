@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 // ESLint for the GNOME Shell extension: `npm ci && npx eslint`. Correctness rules only,
 // after gnome-shell's own lint/eslintrc-gjs.yml; formatting is left to review.
@@ -41,9 +42,11 @@ const noShadowGlobal = {
         docs: {description: 'Disallow local names that hide a JavaScript, GJS or GNOME Shell global'},
         schema: [],
     },
+    // Runs once per file: compares every local name with the globals above.
     create(context) {
         const {scopeManager} = context.sourceCode;
         return {
+            // After the whole file is parsed, so every scope is known.
             'Program:exit'() {
                 const globals = scopeManager.globalScope.set;
                 for (const scope of scopeManager.scopes) {

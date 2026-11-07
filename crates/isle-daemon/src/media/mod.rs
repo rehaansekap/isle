@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! Now-playing information and playback control for whichever MPRIS player
 //! (Spotify, browsers, mpv, ...) is currently active, plus its lyrics.
@@ -11,6 +12,7 @@ mod mpris;
 use log::warn;
 use serde::Serialize;
 use tokio::sync::mpsc;
+use zbus::names::OwnedUniqueName;
 use zbus::zvariant::OwnedObjectPath;
 use zbus::{fdo, interface};
 
@@ -18,6 +20,7 @@ pub use self::lyrics::{Lyrics, LyricsProvider};
 pub use self::mpris::watch;
 use self::mpris::{PlayerProxy, bounded};
 
+/// What the active player is playing, as the extension reads it.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct NowPlaying {
     /// False when no player is running; every other field is then empty.
@@ -38,20 +41,35 @@ pub struct NowPlaying {
     /// position is `position_us + (now - sampled_at_ms) * 1000 * rate`.
     pub position_us: i64,
     pub sampled_at_ms: i64,
+    /// The speed it plays at: the player's `Rate`, or what its reads show (0 while it buffers).
     pub rate: f64,
     pub can_go_next: bool,
     pub can_go_previous: bool,
     pub can_play_pause: bool,
     pub can_seek: bool,
+    /// A browser's media that is over (at its end, or paused a minute): the closed island leaves it out.
+    pub resting: bool,
 }
 
 /// Within this, a position sampled again is the same moment of the song.
 const SAME_POSITION_MS: f64 = 250.0;
 
+/// Where playback is now, from the last sample. A player that reports 0 is not asked.
+fn believed_position_us(now: &NowPlaying) -> i64 {
+    let mut position = now.position_us.max(0) as f64;
+    if now.status == "Playing" {
+        let elapsed_ms = (crate::clock::now_ms() - now.sampled_at_ms).max(0) as f64;
+        position += elapsed_ms * now.rate.max(0.0) * 1000.0;
+    }
+    if now.length_us > 0 {
+        position = position.min(now.length_us as f64);
+    }
+    position.max(0.0) as i64
+}
+
 impl NowPlaying {
     /// Whether `next` says nothing new: the same song and state, at the position this one predicts.
-    /// Players send their properties again often (volume, shuffle, a browser's metadata), each time
-    /// with a fresh sample of the position.
+    /// Players resend their properties often (volume, shuffle, metadata), each with a fresh position.
     pub fn continues_as(&self, next: &NowPlaying) -> bool {
         let without_time = |n: &NowPlaying| NowPlaying {
             position_us: 0,
@@ -92,20 +110,40 @@ pub enum Wish {
     Lyrics(bool),
     /// Which provider looks up lyrics online.
     LyricsProvider(LyricsProvider),
+    /// The island shows the position: read the player again while it plays, or stop. With who asked:
+    /// gone from the bus (GNOME Shell stopped or crashed), it stops too.
+    Watching(bool, Option<OwnedUniqueName>),
+    /// Put the shown player away until it plays again (the Music page's ×).
+    Dismiss,
 }
 
-#[derive(Default)]
+/// The Media1 D-Bus object: the watcher fills it, the extension reads and controls through it.
 pub struct MediaService {
     now_playing: NowPlaying,
     lyrics: Lyrics,
     players: Vec<PlayerChoice>,
     /// The active player and the id of its current track.
     active: Option<(PlayerProxy<'static>, Option<OwnedObjectPath>)>,
-    /// To the watcher, once it runs.
-    wishes: Option<mpsc::UnboundedSender<Wish>>,
+    /// To the watcher; those sent before it runs wait for it.
+    wishes: mpsc::UnboundedSender<Wish>,
 }
 
+pub type Wishes = mpsc::UnboundedReceiver<Wish>;
+
 impl MediaService {
+    /// The service, and the receiving end its wishes arrive on.
+    pub fn new() -> (Self, Wishes) {
+        let (wishes, receiver) = mpsc::unbounded_channel();
+        let service = Self {
+            now_playing: NowPlaying::default(),
+            lyrics: Lyrics::default(),
+            players: Vec::new(),
+            active: None,
+            wishes,
+        };
+        (service, receiver)
+    }
+
     /// Sends a command to the active player in a task of its own, bounded by a timeout.
     /// zbus holds this interface while a method runs, so awaiting a hung player freezes media.
     fn send<F, Fut>(&self, command: &'static str, call: F) -> fdo::Result<()>
@@ -129,6 +167,7 @@ impl MediaService {
 
 #[interface(name = "io.github.zickrian.isle.Media1")]
 impl MediaService {
+    /// Toggles play and pause.
     fn play_pause(&self) -> fdo::Result<()> {
         self.send(
             "PlayPause",
@@ -136,10 +175,12 @@ impl MediaService {
         )
     }
 
+    /// Skips to the next track.
     fn next(&self) -> fdo::Result<()> {
         self.send("Next", |player, _| async move { player.next().await })
     }
 
+    /// Back to the previous track.
     fn previous(&self) -> fdo::Result<()> {
         self.send(
             "Previous",
@@ -150,13 +191,16 @@ impl MediaService {
     /// Seeks to an absolute position in microseconds.
     fn set_position(&self, position_us: i64) -> fdo::Result<()> {
         let position_us = position_us.max(0);
+        // Firefox's Position read is 0 while playing, so a relative seek from that jumps to the start.
+        let believed = believed_position_us(&self.now_playing);
         self.send("SetPosition", move |player, track| async move {
             match track {
                 Some(track) => player.set_position(&track, position_us).await,
                 // Without a track id only a relative seek works; measure it from the player's
                 // live position, since our own sample may be seconds old.
                 None => {
-                    let current = player.position().await?;
+                    let live = player.position().await.unwrap_or(0);
+                    let current = if live > 0 { live } else { believed };
                     player.seek(position_us.saturating_sub(current)).await
                 }
             }
@@ -166,6 +210,11 @@ impl MediaService {
     /// Shows and controls the player named `name` (from `Players`), until another starts playing.
     fn choose(&self, name: &str) -> fdo::Result<()> {
         self.wish(Wish::Player(name.to_owned()))
+    }
+
+    /// Puts the shown player away until it plays again: another one shows, or none.
+    fn dismiss(&self) -> fdo::Result<()> {
+        self.wish(Wish::Dismiss)
     }
 
     /// Whether lyrics are looked up online; off, the lyrics say so instead.
@@ -181,6 +230,17 @@ impl MediaService {
             _ => LyricsProvider::Auto,
         };
         self.wish(Wish::LyricsProvider(p))
+    }
+
+    /// While on, the active player is read at once and every second it plays: players signal seeks and
+    /// stalls unreliably. The extension turns it on only while the island shows the position.
+    fn set_watching(
+        &self,
+        watching: bool,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> fdo::Result<()> {
+        let by = header.sender().map(|name| name.to_owned().into());
+        self.wish(Wish::Watching(watching, by))
     }
 
     /// Brings the player's window to the front.
@@ -215,11 +275,11 @@ impl MediaService {
 }
 
 impl MediaService {
+    /// Passes a wish on to the watcher; fails only once it stopped.
     fn wish(&self, wish: Wish) -> fdo::Result<()> {
         self.wishes
-            .as_ref()
-            .and_then(|wishes| wishes.send(wish).ok())
-            .ok_or_else(|| fdo::Error::Failed("media is not watched yet".into()))
+            .send(wish)
+            .map_err(|_| fdo::Error::Failed("media is not watched".into()))
     }
 }
 

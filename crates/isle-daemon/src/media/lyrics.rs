@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! Lyrics from LRCLIB (<https://lrclib.net>), a free database of synced lyrics,
 //! cached on disk so each song is only looked up once (a song without any, once a week).
@@ -39,6 +40,7 @@ const NOT_FOUND_RETRY: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 /// LRCLIB knows nothing longer (it refuses the length with HTTP 400): a mix, a podcast or a stream.
 const LONGEST_SONG_S: f64 = 3600.0;
 
+/// What the lyrics page shows for the track.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LyricsStatus {
@@ -69,6 +71,7 @@ impl LyricsStatus {
     }
 }
 
+/// A track's lyrics as sent to the extension and kept in the cache.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Lyrics {
     /// Identifies the track these lyrics belong to.
@@ -87,6 +90,7 @@ pub struct TrackQuery {
 }
 
 impl TrackQuery {
+    /// One string per track, for the cache file name and to match lyrics to the track.
     pub fn key(&self) -> String {
         format!(
             "{}\u{1f}{}\u{1f}{}\u{1f}{:.0}",
@@ -94,6 +98,7 @@ impl TrackQuery {
         )
     }
 
+    /// Lyrics with no lines, only a status, for this track.
     pub fn status(&self, status: LyricsStatus) -> Lyrics {
         Lyrics {
             track: self.key(),
@@ -103,6 +108,7 @@ impl TrackQuery {
     }
 }
 
+/// One LRCLIB entry, as its API sends it.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Record {
@@ -117,6 +123,7 @@ struct Record {
 }
 
 impl Record {
+    /// Unknown counts as not instrumental.
     fn instrumental(&self) -> bool {
         self.instrumental.unwrap_or(false)
     }
@@ -132,6 +139,7 @@ enum Failure {
 }
 
 impl fmt::Display for Failure {
+    /// The reason, for the log.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Network(err) => write!(f, "could not reach LRCLIB: {err}"),
@@ -141,6 +149,7 @@ impl fmt::Display for Failure {
 }
 
 impl Failure {
+    /// Offline shows as an error; a refusing server as unavailable.
     fn status(&self) -> LyricsStatus {
         match self {
             Self::Network(_) => LyricsStatus::Error,
@@ -497,6 +506,7 @@ fn cached(path: &Path) -> Option<Lyrics> {
     Some(lyrics)
 }
 
+/// Asks LRCLIB in three steps, from the most exact to the loosest.
 fn lookup(query: &TrackQuery, title: String, artist: String) -> Result<Option<Record>, Failure> {
     let duration = format!("{:.0}", query.length_s);
 
@@ -589,6 +599,7 @@ fn get_json<T: DeserializeOwned>(
     }
 }
 
+/// Some lines to show, or marked instrumental.
 fn has_lyrics(record: &Record) -> bool {
     record
         .synced_lyrics
@@ -633,6 +644,7 @@ fn best_match(results: Vec<Record>, length_s: f64, artist: &str, strict: bool) -
         .max_by_key(score)
 }
 
+/// Synced lines if any, else plain ones, else instrumental or not found.
 fn from_record(query: &TrackQuery, record: Record) -> Lyrics {
     let synced = record
         .synced_lyrics
@@ -659,6 +671,7 @@ fn from_record(query: &TrackQuery, record: Record) -> Lyrics {
     }
 }
 
+/// Where the track's lyrics are cached, named by a hash of its key.
 fn cache_path(query: &TrackQuery, provider: LyricsProvider) -> PathBuf {
     cache_dir()
         .join("lyrics")

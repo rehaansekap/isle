@@ -17,6 +17,12 @@ Security problems go privately to the maintainer; see
   animations that stop when they settle.
 - **Logic goes in Rust.** The extension draws; rules that can be unit tested
   belong in `crates/isle-core`.
+- **Nothing goes online unasked.** A feature that uses the network says so in
+  [SECURITY.md](SECURITY.md#what-leaves-your-computer) in the same pull
+  request, and can be turned off.
+- **Isle's own words.** Describe Isle, its look and its settings in their own
+  terms: no other operating system's names or comparisons in code, settings
+  keys, UI text or docs.
 
 ## Building
 
@@ -28,14 +34,20 @@ cargo build -p isle-shelf       # needs libgtk-4-dev
 
 ## Checks
 
-Run these before sending a pull request (CI runs the same). They build
-`isle-shelf` too, so they need the GTK 4 development files (`libgtk-4-dev`):
+Run these before sending a pull request (CI runs the same). The workspace
+includes `isle-shelf` and `isle-whisper`, so they need GTK 4
+(`libgtk-4-dev`) and, for whisper.cpp, `cmake`, `g++`, `clang` with
+`libclang-dev`, the Vulkan headers (`libvulkan-dev`) and `glslc`. Without
+those, add `--exclude isle-shelf --exclude isle-whisper` to check the rest.
 
 ```sh
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 npm ci && npx eslint                                  # the extension (eslint.config.mjs)
+node --test tests/extension/*.test.js                 # its parts that need no GNOME Shell
+gjs -m tests/extension/format.gjs.js                  # and those that need GLib
+glib-compile-schemas --strict --dry-run gnome-extension/schemas
 shellcheck get.sh install.sh uninstall.sh scripts/*.sh scripts/isle-charge-limit scripts/ci/*.sh packaging/aur/update.sh
 cargo deny check                                      # advisories and licences (deny.toml)
 ```
@@ -82,8 +94,15 @@ journalctl -f /usr/bin/gnome-shell | grep -i isle    # the extension
 
 ## Commits and pull requests
 
-- One topic per pull request; describe what changed and how you tested it.
-- Include screenshots for visual changes.
+- One topic per pull request: two fixes are two pull requests, so each can be
+  reviewed, tested and taken on its own. Describe what changed and how you
+  tested it.
+- When `main` moves on, rebase on it rather than merging it in.
+- For visual changes, include screenshots, and try them on GNOME 46 and the
+  newest GNOME Shell (nested, or in a virtual machine).
+- Your commits keep your name. What ships is credited in the changelog
+  ("Thanks to @you") and you are listed under
+  [Contributors](README.md#contributors) in the README.
 - By contributing you agree that your work is licensed under the
   GPL-3.0-or-later, like the rest of Isle.
 

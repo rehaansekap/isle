@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! The conversation the island shows: what the user said, the commands that ran, and the answers. Only the
-//! current one is kept (in chat.json, private to the user), never past a day: it ends at midnight, or once
-//! quiet as long as Settings says, and then it is deleted, with the AI's own copy of it.
+//! current one is kept (chat.json), deleted with the AI's copy at midnight or once quiet as long as Settings says.
 
 use chrono::{Local, TimeZone};
 use serde::{Deserialize, Serialize};
@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 /// The island shows this many of the newest messages; older ones are let go.
 const SHOWN: usize = 50;
 
+/// Who a message is from; a command is its own kind.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
@@ -18,6 +19,7 @@ pub enum Role {
     Command,
 }
 
+/// One message, as the island draws it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Item {
     pub role: Role,
@@ -36,6 +38,7 @@ pub struct Item {
 }
 
 impl Item {
+    /// The user's words, typed or spoken.
     pub fn said(text: &str, spoken: bool, at: i64) -> Self {
         Self {
             role: Role::User,
@@ -47,6 +50,7 @@ impl Item {
         }
     }
 
+    /// The AI's reply.
     pub fn answer(text: &str, at: i64) -> Self {
         Self {
             role: Role::Assistant,
@@ -58,6 +62,7 @@ impl Item {
         }
     }
 
+    /// A command and how it went.
     pub fn command(command: &str, status: &str, at: i64) -> Self {
         Self {
             role: Role::Command,
@@ -78,6 +83,7 @@ pub enum Keep {
 }
 
 impl Keep {
+    /// Anything not known keeps it for the day.
     pub fn parse(setting: &str) -> Self {
         match setting {
             "idle-30m" => Keep::Idle(30 * 60_000),
@@ -101,6 +107,7 @@ pub struct Chat {
 }
 
 impl Chat {
+    /// Adds a message, letting go of the oldest past `SHOWN`.
     pub fn push(&mut self, item: Item) {
         self.last = self.last.max(item.at);
         self.items.push(item);
@@ -109,6 +116,7 @@ impl Chat {
         }
     }
 
+    /// Nothing said and no AI conversation to resume.
     pub fn is_empty(&self) -> bool {
         self.items.is_empty() && self.conversation.is_empty()
     }
@@ -168,6 +176,7 @@ pub fn mask_secrets(text: &str) -> String {
     out
 }
 
+/// One line of `mask_secrets`: the value after a secret-sounding key, or a known key prefix.
 fn mask_line(line: &str) -> String {
     // ASCII-only, so offsets in `lower` stay valid in `line` (İ grows when lowercased).
     let lower = line.to_ascii_lowercase();

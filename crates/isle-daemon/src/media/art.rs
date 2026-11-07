@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! Cover art as local files, downloading remote art (e.g. Spotify's) once.
 
@@ -44,6 +45,7 @@ pub fn download(art_url: &str) -> anyhow::Result<String> {
     Ok(path.to_string_lossy().into_owned())
 }
 
+/// Where a remote cover lives in the cache, named by a hash of its URL.
 fn cached_path(art_url: &str) -> PathBuf {
     cache_dir()
         .join("art")

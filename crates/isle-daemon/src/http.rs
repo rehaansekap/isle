@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! One HTTP agent for every request isled makes, so they share its connections and TLS setup.
 

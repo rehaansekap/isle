@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 // Writes what the voice assistant was asked to write into the window in front: short text typed key by
 // key through a virtual keyboard, longer text pasted through the clipboard, which is then put back.
@@ -33,6 +34,7 @@ function canType(text) {
     }
 }
 
+/** Types or pastes assistant text into the focused window. */
 export class TextWriter {
     // `history` is the ClipboardHistory: told to leave out what is put on the clipboard here, and
     // lending its virtual keyboard (made at start, as a new one drops the first keys it gets).
@@ -66,6 +68,7 @@ export class TextWriter {
         return Boolean(target) && global.display.focus_window === target && (!focus || focus === global.stage);
     }
 
+    // Sends each character as a key press and release on the shared virtual keyboard.
     _type(text) {
         const keyboard = this._history.keyboard;
         for (const char of text) {
@@ -124,6 +127,7 @@ export class TextWriter {
         }
     }
 
+    // Runs `callback` once after `ms`, cancelled on destroy.
     _later(ms, callback) {
         const id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
             this._timeouts.delete(id);
@@ -133,6 +137,7 @@ export class TextWriter {
         this._timeouts.add(id);
     }
 
+    /** Stops any pending clipboard restore. */
     destroy() {
         this._destroyed = true;
         this._timeouts.forEach(id => GLib.source_remove(id));

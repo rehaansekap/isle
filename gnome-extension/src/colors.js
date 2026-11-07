@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 // Colours to wash the island in: picked from a picture (a song's cover, a
 // file on the shelf) or, for a file without one, from its type.
@@ -95,7 +96,7 @@ export const vividColorOfFile = memoByFile(path => {
     }
 });
 
-// The colours of iOS's system palette, toned like `vividColor`'s.
+// A clear system palette, toned like `vividColor`'s.
 const TYPE_COLORS = [
     [['application/pdf'], [0.8, 0.22, 0.2]],
     [['audio/'], [0.8, 0.22, 0.38]],

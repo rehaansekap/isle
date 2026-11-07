@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! AI agent alerts: Claude Code and Codex, once the user turns them on, run `isled --agent-hook` when
 //! they need the user or finish, and the island shows it. The hooks live in each AI's own config.
@@ -18,7 +19,9 @@ use futures_util::StreamExt;
 use inotify::{EventMask, Inotify, WatchMask};
 use log::{debug, warn};
 use serde::{Deserialize, Serialize};
+use tokio::sync::oneshot;
 use tokio::time::{Instant, sleep_until};
+use zbus::names::UniqueName;
 use zbus::object_server::{InterfaceRef, SignalEmitter};
 use zbus::{fdo, interface};
 
@@ -58,6 +61,7 @@ pub enum Ai {
 impl Ai {
     const ALL: [Ai; 2] = [Ai::Claude, Ai::Codex];
 
+    /// As Settings and the hooks name it.
     fn id(self) -> &'static str {
         match self {
             Ai::Claude => "claude",
@@ -65,10 +69,12 @@ impl Ai {
         }
     }
 
+    /// Settings' or a hook's name back to the AI; `None` for one Isle has no hooks for.
     fn from_id(id: &str) -> Option<Ai> {
         Self::ALL.into_iter().find(|ai| ai.id() == id)
     }
 
+    /// What the island calls it.
     fn name(self) -> &'static str {
         match self {
             Ai::Claude => "Claude Code",
@@ -76,6 +82,7 @@ impl Ai {
         }
     }
 
+    /// The config file its hooks go in.
     fn config(self) -> PathBuf {
         match self {
             Ai::Claude => claude::settings_path(),
@@ -93,6 +100,7 @@ impl Ai {
         }
     }
 
+    /// Whether its program is installed.
     fn found(self) -> bool {
         match self {
             Ai::Claude => Provider::Claude.program().is_some(),
@@ -100,6 +108,7 @@ impl Ai {
         }
     }
 
+    /// Whether Isle's hook is in its config now.
     fn hooked(self) -> bool {
         match self {
             Ai::Claude => claude::hooked(&self.config()),
@@ -107,6 +116,7 @@ impl Ai {
         }
     }
 
+    /// Puts Isle's hook in its config, pointing at this isled.
     fn hook(self) -> anyhow::Result<()> {
         let isled = isled_path()?;
         let isled = isled
@@ -137,12 +147,14 @@ fn isled_path() -> anyhow::Result<PathBuf> {
     Ok(std::fs::canonicalize(&exe).unwrap_or(exe))
 }
 
+/// One AI as Settings shows it: installed, and hooked.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize)]
 struct Status {
     found: bool,
     hooked: bool,
 }
 
+/// Both AIs' status, for the `Agents` property.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize)]
 struct Agents {
     claude: Status,
@@ -150,6 +162,7 @@ struct Agents {
 }
 
 impl Agents {
+    /// Read from disk each time, so a hook added or removed by hand shows.
     fn read() -> Self {
         let status = |ai: Ai| Status {
             found: ai.found(),
@@ -180,7 +193,8 @@ pub struct Event {
 impl Event {
     /// Checked, on one line each and cut to size: the project is the folder's name unless given.
     pub fn checked(mut self) -> Result<Self, String> {
-        if Ai::from_id(&self.provider).is_none() {
+        // Grok has no hooks of its own: it runs Claude's, and the hook says so (see hook.rs `ai_of`).
+        if Ai::from_id(&self.provider).is_none() && self.provider != "grok" {
             return Err(format!("unknown provider `{}`", cut(&self.provider, 40)));
         }
         if !KINDS.contains(&self.kind.as_str()) {
@@ -210,6 +224,24 @@ impl Event {
     }
 }
 
+/// Why `ai`'s alerts couldn't be turned on or off, in a line for the island, from the `error` logged.
+fn refusal(ai: Ai, error: &str) -> String {
+    let name = ai.name();
+    let said = |words: &[&str]| words.iter().any(|word| error.contains(word));
+    if said(&["already sends its notifications"]) {
+        format!("{name} already sends its alerts to another app.")
+    } else if said(&[
+        "not valid JSON",
+        "not valid TOML",
+        "not a JSON object",
+        "not a list",
+    ]) {
+        format!("{name}’s settings file has a mistake. Fix it, then turn this on again.")
+    } else {
+        format!("Isle couldn’t change {name}’s settings. Try again.")
+    }
+}
+
 /// `text` on one line, its spaces collapsed, at most `max` characters (an ellipsis ends a cut one).
 fn cut(text: &str, max: usize) -> String {
     let words: Vec<String> = text
@@ -217,11 +249,15 @@ fn cut(text: &str, max: usize) -> String {
         .map(|word| word.chars().filter(|c| !c.is_control()).collect())
         .filter(|word: &String| !word.is_empty())
         .collect();
-    let line = words.join(" ");
-    if line.chars().count() <= max {
-        return line;
+    clip(&words.join(" "), max)
+}
+
+/// `text` as it is, at most `max` characters (an ellipsis ends a cut one).
+fn clip(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_owned();
     }
-    let mut short: String = line.chars().take(max.saturating_sub(1)).collect();
+    let mut short: String = text.chars().take(max.saturating_sub(1)).collect();
     short.truncate(short.trim_end().len());
     short.push('…');
     short
@@ -246,7 +282,12 @@ pub struct Request {
 }
 
 impl Request {
+    /// Checked like an `Event`, with the tool cut to size; the input stays exactly as the AI would run it.
     fn checked(mut self) -> Result<Self, String> {
+        // A hook sends only what shows whole (see hook.rs `request`): anything else asks in the terminal.
+        if !crate::assistant::shows_whole(&self.input, usize::MAX) {
+            return Err("the input has line breaks or hidden characters".into());
+        }
         let event = Event {
             provider: self.provider.clone(),
             kind: "permission".into(),
@@ -262,7 +303,7 @@ impl Request {
         self.session = event.session;
         self.pids = event.pids;
         self.tool = cut(&self.tool, MAX_TOOL);
-        self.input = cut(&self.input, MAX_INPUT);
+        self.input = clip(&self.input, MAX_INPUT);
         Ok(self)
     }
 }
@@ -274,6 +315,7 @@ struct Limiter {
 }
 
 impl Limiter {
+    /// False for an event too soon after the last of its kind.
     fn allow(&mut self, event: &Event, now: Instant) -> bool {
         let key = (
             event.provider.clone(),
@@ -294,14 +336,96 @@ impl Limiter {
     }
 }
 
-/// Permissions waiting for the user, by id, and where each answer goes.
-type Waiting = std::sync::Mutex<HashMap<String, tokio::sync::oneshot::Sender<String>>>;
+/// Whether GNOME's screen is locked (its ScreenSaver says so within a second); unknown counts as not.
+async fn screen_locked(bus: &zbus::Connection) -> bool {
+    let call = bus.call_method(
+        Some("org.gnome.ScreenSaver"),
+        "/org/gnome/ScreenSaver",
+        Some("org.gnome.ScreenSaver"),
+        "GetActive",
+        &(),
+    );
+    match tokio::time::timeout(Duration::from_secs(1), call).await {
+        Ok(Ok(reply)) => reply.body().deserialize::<bool>().unwrap_or(false),
+        _ => false,
+    }
+}
 
+/// Whether the island is there to answer asks, as the extension last said (see `SetPresent`).
+#[derive(Debug, Clone, Default, PartialEq)]
+enum Island {
+    /// Never told (an older extension never says): taken as there, as before.
+    #[default]
+    Unknown,
+    /// There, in GNOME Shell on this bus name: the name leaving the bus takes the island with it.
+    There(UniqueName<'static>),
+    Gone,
+}
+
+impl Island {
+    /// GNOME Shell's bus name, while it has the island.
+    fn shell(&self) -> Option<UniqueName<'static>> {
+        match self {
+            Island::There(shell) => Some(shell.clone()),
+            _ => None,
+        }
+    }
+}
+
+/// Permissions waiting for the user, by id, and where each answer goes; and whether anyone can answer.
+#[derive(Default)]
+struct Asks {
+    waiting: HashMap<String, oneshot::Sender<String>>,
+    island: Island,
+}
+
+impl Asks {
+    /// The island came, in GNOME Shell on bus name `shell`, or went (`None`): then every ask waiting is
+    /// let go, and the AIs ask in their terminals.
+    fn island(&mut self, shell: Option<UniqueName<'static>>) {
+        self.island = match shell {
+            Some(shell) => Island::There(shell),
+            None => {
+                for (_, answer) in self.waiting.drain() {
+                    answer.send(String::new()).ok();
+                }
+                Island::Gone
+            }
+        };
+    }
+
+    /// GNOME Shell's `shell` left the bus: the island it had is gone, not one a newer shell has.
+    fn left(&mut self, shell: &UniqueName<'_>) {
+        if matches!(&self.island, Island::There(there) if there == shell) {
+            self.island(None);
+        }
+    }
+
+    /// Takes ask `id` to wait for `answer`; false with no island there, or too many waiting already.
+    fn wait(&mut self, id: String, answer: oneshot::Sender<String>) -> bool {
+        if self.island == Island::Gone || self.waiting.len() >= MAX_WAITING {
+            return false;
+        }
+        self.waiting.insert(id, answer);
+        true
+    }
+}
+
+/// Agent alerts and permission asks, between the hooks and the island.
 #[derive(Default)]
 pub struct AgentsService {
     limiter: std::sync::Mutex<Limiter>,
-    waiting: std::sync::Arc<Waiting>,
+    asks: std::sync::Mutex<Asks>,
     asked: std::sync::atomic::AtomicU64,
+}
+
+impl AgentsService {
+    /// The asks waiting, and the island.
+    fn asks(&self) -> std::sync::MutexGuard<'_, Asks> {
+        self.asks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
 }
 
 #[interface(name = "io.github.zickrian.isle.Agents1")]
@@ -325,7 +449,11 @@ impl AgentsService {
         if let Err(err) = self.agents_changed(&emitter).await {
             warn!("could not publish the AI alerts: {err}");
         }
-        done.map_err(|err| fdo::Error::Failed(format!("{err:#}")))
+        // The details go to the log; the island says it in a line anyone reads.
+        done.map_err(|err| {
+            warn!("could not change {}'s hooks: {err:#}", ai.name());
+            fdo::Error::Failed(refusal(ai, &format!("{err:#}")))
+        })
     }
 
     /// From `isled --agent-hook`: JSON `{provider, kind, project, cwd, message, session}`.
@@ -353,9 +481,8 @@ impl AgentsService {
         Ok(Self::event(&emitter, &json).await?)
     }
 
-    /// From `isled --agent-hook` as an AI asks a permission: JSON `{provider, project, cwd, session, tool,
-    /// input, always}`. Shows it on the island and waits for the user: "allow", "always" or "deny"; "" when
-    /// the island will not answer (the AI then asks in its own terminal).
+    /// From `isled --agent-hook`: a `Request` as JSON. Waits for the user's "allow", "always" or "deny";
+    /// "" when the island will not answer, and the AI then asks in its own terminal.
     async fn decide(
         &self,
         json: &str,
@@ -370,31 +497,58 @@ impl AgentsService {
             .asked
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         request.id = format!("{}-{number}", request.provider);
-        let (answer, answered) = tokio::sync::oneshot::channel();
+        // No island to show it (Isle off, the screen locked): the AI asks in its terminal at once.
+        let island = self.asks().island.clone();
+        if island == Island::Gone {
+            return Ok(String::new());
+        }
+        // Never told (isled restarted meanwhile): the screen locked has no island either.
+        if island == Island::Unknown && screen_locked(connection).await {
+            return Ok(String::new());
+        }
+        let dbus = zbus::fdo::DBusProxy::new(connection).await.ok();
+        // GNOME Shell gone from the bus (it stopped or restarted) took the island with it.
+        if let Some(shell) = island.shell()
+            && !on_bus(dbus.as_ref(), &shell).await
         {
-            let mut waiting = self
-                .waiting
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if waiting.len() >= MAX_WAITING {
+            self.asks().left(&shell);
+        }
+        let (answer, answered) = oneshot::channel();
+        let shell = {
+            let mut asks = self.asks();
+            if !asks.wait(request.id.clone(), answer) {
                 return Ok(String::new());
             }
-            waiting.insert(request.id.clone(), answer);
-        }
+            asks.island.shell()
+        };
         let shown = serde_json::to_string(&request).unwrap_or_default();
         Self::asking(&emitter, &shown).await?;
         let asker = header.sender().map(|name| name.to_owned());
-        let decision = wait_for_answer(connection, asker, answered).await;
+        let watched: Vec<UniqueName<'static>> = asker.into_iter().chain(shell).collect();
+        let decision = wait_for_answer(dbus.as_ref(), &watched, answered).await;
         // Over, one way or another: the island lets it go.
-        let still = self
-            .waiting
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(&request.id);
+        let still = self.asks().waiting.remove(&request.id);
         if still.is_some() {
             Self::withdrawn(&emitter, &request.id).await.ok();
         }
         Ok(decision)
+    }
+
+    /// Whether the island is there to answer asks: the extension says so as it starts, and not as it goes
+    /// (Isle turned off, the screen locked). GNOME Shell's only.
+    async fn set_present(
+        &self,
+        present: bool,
+        #[zbus(connection)] connection: &zbus::Connection,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> fdo::Result<()> {
+        crate::caller::shell_only(connection, &header).await?;
+        let shell = header
+            .sender()
+            .filter(|_| present)
+            .map(|name| name.to_owned());
+        self.asks().island(shell);
+        Ok(())
     }
 
     /// The island's answer to permission `id`: "allow", "always" or "deny" ("" lets the AI ask itself).
@@ -412,11 +566,7 @@ impl AgentsService {
                 cut(decision, 20)
             )));
         }
-        let answer = self
-            .waiting
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(id);
+        let answer = self.asks().waiting.remove(id);
         if let Some(answer) = answer {
             answer.send(decision.to_owned()).ok();
         }
@@ -437,17 +587,18 @@ impl AgentsService {
         serde_json::to_string(&Agents::read()).unwrap_or_default()
     }
 
+    /// An AI needs the user or finished: the checked event as JSON.
     #[zbus(signal)]
     async fn event(emitter: &SignalEmitter<'_>, json: &str) -> zbus::Result<()>;
 }
 
-/// The user's answer, or "" if none comes in time or the hook asking is gone (the AI moved on).
+/// The user's answer, or "" if none comes in time or one of `watched` leaves the bus: the hook asking (the
+/// AI moved on), or GNOME Shell with the island.
 async fn wait_for_answer(
-    connection: &zbus::Connection,
-    asker: Option<zbus::names::UniqueName<'static>>,
-    mut answered: tokio::sync::oneshot::Receiver<String>,
+    dbus: Option<&fdo::DBusProxy<'_>>,
+    watched: &[UniqueName<'static>],
+    mut answered: oneshot::Receiver<String>,
 ) -> String {
-    let dbus = zbus::fdo::DBusProxy::new(connection).await.ok();
     let deadline = Instant::now() + ANSWER_WITHIN;
     loop {
         tokio::select! {
@@ -456,13 +607,24 @@ async fn wait_for_answer(
                 if Instant::now() >= deadline {
                     return String::new();
                 }
-                if let (Some(dbus), Some(asker)) = (&dbus, &asker)
-                    && !dbus.name_has_owner(asker.clone().into()).await.unwrap_or(true)
-                {
-                    return String::new();
+                for name in watched {
+                    if !on_bus(dbus, name).await {
+                        return String::new();
+                    }
                 }
             }
         }
+    }
+}
+
+/// Whether `name` is still on the bus; true when that can't be told.
+async fn on_bus(dbus: Option<&fdo::DBusProxy<'_>>, name: &UniqueName<'_>) -> bool {
+    match dbus {
+        Some(dbus) => dbus
+            .name_has_owner(name.as_ref().into())
+            .await
+            .unwrap_or(true),
+        None => true,
     }
 }
 
@@ -489,10 +651,8 @@ async fn watch_configs(
         .map(Ai::config)
         .chain([codex::hooks_path()])
         .collect();
-    // Where their programs land when installed (npm, nvm, volta, bun, pnpm, the installers), as the
-    // assistant looks for them: a new one is found at once. A new Node under nvm is watched in turn.
-    // A folder not there yet (a new user's ~/.local/bin, nvm before its first Node): its nearest parent
-    // that is, for the next folder down to appear, and then all is watched again.
+    // Also where their programs land when installed (npm, nvm, volta, bun…), so a new one is found at once.
+    // A folder not there yet is watched through its nearest parent until it appears.
     let home = dirs::home_dir().unwrap_or_default();
     let mut ahead: Vec<(inotify::WatchDescriptor, std::ffi::OsString)> = Vec::new();
     let mut watch_or_ahead = |dir: &Path, mask: WatchMask| {
@@ -635,6 +795,90 @@ pub fn unhook_all() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_refusal_reads_plainly() {
+        let broken = "/home/u/.claude/settings.json is not valid JSON; fix it first: expected value at line 3";
+        let said = refusal(Ai::Claude, broken);
+        assert_eq!(
+            said,
+            "Claude Code’s settings file has a mistake. Fix it, then turn this on again."
+        );
+        let taken = refusal(
+            Ai::Codex,
+            "Codex already sends its notifications to another program",
+        );
+        assert_eq!(taken, "Codex already sends its alerts to another app.");
+        let denied = refusal(
+            Ai::Codex,
+            "could not write /home/u/.codex/hooks.json: Permission denied",
+        );
+        assert!(!denied.contains('/') && denied.starts_with("Isle couldn’t change Codex"));
+        // The hooks file's own words for a file of the wrong shape.
+        for broken in [
+            serde_json::json!([]),
+            serde_json::json!({"hooks": 1}),
+            serde_json::json!({"hooks": {"Stop": 1}}),
+        ] {
+            let err = json_hooks::add_hooks(&mut broken.clone(), "isled", &codex::SPEC)
+                .context("in /home/u/.codex/hooks.json")
+                .unwrap_err();
+            let said = refusal(Ai::Codex, &format!("{err:#}"));
+            assert!(said.contains("settings file has a mistake"), "{said}");
+        }
+    }
+
+    #[test]
+    fn a_command_asked_about_stays_as_it_runs() {
+        let request = |input: &str| {
+            Request {
+                provider: "claude".into(),
+                tool: "Bash".into(),
+                input: input.into(),
+                ..Request::default()
+            }
+            .checked()
+        };
+        assert_eq!(request("grep \"a  b\" f").unwrap().input, "grep \"a  b\" f");
+        assert!(request("ls\nrm -rf ~").is_err());
+        assert!(request("ls \u{202E}fdp.exe").is_err());
+        let long = request(&"x ".repeat(MAX_INPUT)).unwrap().input;
+        assert!(long.chars().count() <= MAX_INPUT && long.ends_with('…'));
+    }
+
+    #[test]
+    fn asks_wait_only_while_the_island_is_there() {
+        let shell = UniqueName::try_from(":1.12").unwrap();
+        let mut asks = Asks::default();
+        // Never told (an older extension): asks wait, as before.
+        let (answer, mut first) = oneshot::channel();
+        assert!(asks.wait("claude-0".into(), answer));
+        asks.island(Some(shell.clone()));
+        let (answer, mut second) = oneshot::channel();
+        assert!(asks.wait("codex-1".into(), answer));
+        // Another shell leaving the bus changes nothing; this one leaving lets every ask go at once.
+        asks.left(&UniqueName::try_from(":1.40").unwrap());
+        assert!(first.try_recv().is_err() && asks.waiting.len() == 2);
+        asks.left(&shell);
+        assert_eq!(first.try_recv().unwrap(), "");
+        assert_eq!(second.try_recv().unwrap(), "");
+        assert!(asks.waiting.is_empty());
+        // Gone: a new ask doesn't wait, until the island is back.
+        let (answer, _) = oneshot::channel();
+        assert!(!asks.wait("codex-2".into(), answer));
+        asks.island(Some(UniqueName::try_from(":1.77").unwrap()));
+        let (answer, _) = oneshot::channel();
+        assert!(asks.wait("codex-3".into(), answer));
+        // Turned off: the same.
+        asks.island(None);
+        assert!(asks.waiting.is_empty() && asks.island == Island::Gone);
+        // At most `MAX_WAITING` at once.
+        asks.island(Some(shell));
+        for number in 0..MAX_WAITING {
+            assert!(asks.wait(format!("claude-{number}"), oneshot::channel().0));
+        }
+        assert!(!asks.wait("claude-x".into(), oneshot::channel().0));
+    }
 
     fn event(json: &str) -> Result<Event, String> {
         serde_json::from_str::<Event>(json).unwrap().checked()

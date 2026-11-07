@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Packs a release with the programs ready-built, so installing needs no Rust:
-#   dist/isle-<version>-<arch>-linux.tar.gz and its .sha256
-# Usage: scripts/package.sh [version]   (default: the version in Cargo.toml)
-# Building isle-shelf needs the GTK 4 development files (libgtk-4-dev), and isle-whisper cmake, a C++
-# compiler, libclang, the Vulkan headers and glslc (cmake g++ libclang-dev libvulkan-dev glslc).
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 zickrian
+# Packs dist/isle-<version>-<arch>-linux.tar.gz (+ .sha256) with ready-built programs; arg: version (default Cargo.toml).
+# Needs libgtk-4-dev for isle-shelf, and cmake g++ libclang-dev libvulkan-dev glslc for isle-whisper.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."

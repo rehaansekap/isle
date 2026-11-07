@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
-//! What the user's login shell sets that isled lacks, started by systemd from the desktop session: where
-//! their programs are (nvm, Homebrew, a custom npm prefix…), and what their AI CLIs read (another config
-//! folder, an API key, a proxy). Asked once at start, as code editors do; what systemd already sets wins.
+//! What the login shell sets that isled, started by systemd, lacks: the PATH of nvm or Homebrew, and
+//! the AI CLIs' keys, config folders and proxies. Asked once at start; what systemd sets wins.
 
 use std::ffi::OsString;
 use std::io::Read;
@@ -96,6 +96,7 @@ fn login_env() -> Option<Vec<(OsString, OsString)>> {
     ask(&user_shell()?, TIMEOUT)
 }
 
+/// Runs `shell` once for its environment, giving up (and ending all it started) after `timeout`.
 fn ask(shell: &Path, timeout: Duration) -> Option<Vec<(OsString, OsString)>> {
     let mut child = Command::new(shell)
         .args(["-l", "-i", "-c", &format!("printf {MARK}; env -0")])

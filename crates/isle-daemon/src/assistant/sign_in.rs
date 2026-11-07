@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
-//! The user's own sign-in, shared with Isle's copy of a CLI (Codex, agy): Isle's home for it links to the
-//! user's sign-in file. A CLI that renews its token replaces the link with a file of its own; that newer
-//! sign-in goes back over the user's, so neither is left holding a token the server has since replaced.
+//! The user's sign-in, linked into Isle's home for a CLI (Codex, agy). A token the CLI renews there goes
+//! back over the user's, so neither side is left holding one the server has since replaced.
 
 use std::fs;
 use std::io::Write;

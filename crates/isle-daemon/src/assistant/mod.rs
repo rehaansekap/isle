@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
-//! The voice assistant: records a request, turns it into text and asks the AI the user picked (agy,
-//! Claude Code or Codex) what to do. It works as an agent, step by step, and carries on in the background
-//! once the island closes; the extension shows each step and runs the desktop actions it asks for. The AI
-//! and speech recognition run only while needed: nothing is left running between requests.
+//! The voice assistant: turns a request into text and lets the AI the user picked (agy, Claude Code, Codex,
+//! Grok or opencode) answer it step by step, also once the island closes. Nothing runs between requests.
 
 mod agenda;
 mod agent;
@@ -19,8 +18,11 @@ mod codex;
 #[cfg(test)]
 mod eval;
 mod files;
+mod grok;
 mod mic;
+mod models;
 mod music;
+mod opencode;
 mod sign_in;
 mod system;
 mod tasks;
@@ -32,7 +34,7 @@ use std::time::Duration;
 use chrono::NaiveDate;
 
 use isle_core::voice::{Endpointer, Verdict, meter, rms};
-use log::warn;
+use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
@@ -46,7 +48,13 @@ pub use self::brain::{Provider, install_dirs};
 use self::chat::{Chat, Item, Keep};
 pub use self::claude::config_dir as claude_config_dir;
 pub use self::codex::user_home as codex_home;
+pub use self::grok::{
+    billing_url as grok_billing_url, client_version as grok_client_version, plan as grok_plan,
+    sign_in as grok_sign_in, user_home as grok_home,
+};
 use self::mic::Mic;
+use self::models::{Catalogs, Why};
+pub use self::models::{claude_plan, codex_plan, plan_seen, set_assistant_on};
 pub use self::tasks::shows_whole;
 use self::whisper::Whisper;
 use crate::store::{Store, data_dir};
@@ -99,6 +107,7 @@ fn action_kinds() -> &'static [String] {
 const NEEDS_RELOGIN: &str =
     "I can’t do that yet: Isle was updated, and the update starts once you log out and back in.";
 
+/// Where a request is, which picks what the island shows.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum Phase {
@@ -113,6 +122,7 @@ enum Phase {
     Error,
 }
 
+/// Everything the island shows of the assistant, sent as the `State` JSON.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 struct State {
     phase: Phase,
@@ -152,12 +162,14 @@ struct State {
 #[serde(default)]
 pub struct Context {
     apps: Vec<String>,
-    /// The AI picked in Settings ("auto", "agy", "claude", "codex"), and the model picked for each
+    /// The AI picked in Settings ("auto", "agy", "claude", "codex", "grok", "opencode"), and the model picked for each
     /// ("" for its own default).
     provider: String,
     agy_model: String,
     claude_model: String,
     codex_model: String,
+    grok_model: String,
+    opencode_model: String,
     whisper_model: String,
     language: String,
     /// How long a quiet conversation is kept ("day", "idle-30m", "idle-2h"; see chat.rs).
@@ -291,6 +303,7 @@ fn soften(text: &str) -> String {
     softened
 }
 
+/// What the D-Bus methods hand the assistant's loop.
 pub enum Command {
     // Boxed: a context is large, and a command is carried in every Result that may hand one back.
     /// The island opened on the assistant: the AI starts now, ready by the time the request comes.
@@ -311,6 +324,7 @@ pub enum Command {
     Settled(Box<tasks::Task>, tasks::Ended, String),
 }
 
+/// The Assistant1 D-Bus object: its state and history for the island, and a line to the loop.
 pub struct AssistantService {
     state: State,
     /// The conversation as the island shows it: JSON `[{role, text, spoken, command, status, at}]`.
@@ -321,6 +335,7 @@ pub struct AssistantService {
 pub type Commands = mpsc::UnboundedReceiver<Command>;
 
 impl AssistantService {
+    /// The service, and the receiving end its commands arrive on.
     pub fn new() -> (Self, Commands) {
         let (commands, receiver) = mpsc::unbounded_channel();
         let service = Self {
@@ -331,10 +346,11 @@ impl AssistantService {
         (service, receiver)
     }
 
+    /// Passes a command on; fails only once the loop is gone.
     fn send(&self, command: Command) -> fdo::Result<()> {
         self.commands
             .send(command)
-            .map_err(|_| fdo::Error::Failed("the assistant stopped".into()))
+            .map_err(|_| fdo::Error::Failed("The assistant stopped. Try again.".into()))
     }
 
     /// A new request while one is answered would wait unseen behind it (see `hold`): refused, so the island
@@ -354,6 +370,7 @@ impl AssistantService {
     }
 }
 
+/// The extension's JSON context, or an InvalidArgs error back to it.
 fn context(json: &str) -> fdo::Result<Context> {
     serde_json::from_str(json).map_err(|err| fdo::Error::InvalidArgs(err.to_string()))
 }
@@ -362,7 +379,8 @@ fn context(json: &str) -> fdo::Result<Context> {
 #[interface(name = "io.github.zickrian.isle.Assistant1")]
 impl AssistantService {
     /// Records a request and answers it; `context` is JSON
-    /// `{apps, provider, agy_model, claude_model, codex_model, whisper_model, language, selection, …}`.
+    /// `{apps, provider, agy_model, claude_model, codex_model, grok_model, opencode_model, whisper_model, language,
+    /// selection, …}`.
     async fn listen(
         &self,
         context_json: &str,
@@ -444,6 +462,7 @@ impl AssistantService {
         self.send(Command::NewChat)
     }
 
+    /// Brings back the conversation a new chat just put aside.
     async fn undo_new_chat(
         &self,
         #[zbus(connection)] connection: &Connection,
@@ -481,6 +500,29 @@ impl AssistantService {
         self.history.clone()
     }
 
+    /// Each AI signed in, its plan and the models the plan allows: JSON `{claude: {plan, default,
+    /// default_name, models: [{id, name}], checked_ms}, codex: …, agy: …}`. Settings reads it too.
+    #[zbus(property)]
+    fn models(&self) -> String {
+        models::json()
+    }
+
+    /// Looks again at what each AI's plan allows, in the background (`Models` follows). Settings asks.
+    fn refresh_models(&self) {
+        models::refresh(&Provider::all(), Why::Asked);
+    }
+
+    /// `provider` answers with `used` instead of `picked`, which its plan (`plan`) lacks or refused; it
+    /// goes back to `picked` once allowed. Told once per pick; all by their names.
+    #[zbus(signal)]
+    async fn model_switched(
+        emitter: &SignalEmitter<'_>,
+        provider: &str,
+        plan: &str,
+        picked: &str,
+        used: &str,
+    ) -> zbus::Result<()>;
+
     /// A command that ran with nobody watching (isled restarted meanwhile, or the user logged out) has
     /// ended: what to say about it, and whether it went well.
     #[zbus(signal)]
@@ -507,28 +549,99 @@ struct Session {
     turns: u32,
     /// Whether the island shows the assistant; closed, a request is answered in the background.
     open: bool,
-    /// A model the AI said it cannot use (not on the user's plan, renamed): its own default instead.
-    refused_model: Option<(Provider, String)>,
+    /// Each AI's plan and models as last found (see models.rs), taken as an AI starts.
+    catalogs: Catalogs,
+    /// Models an AI said it cannot use, with its catalog then: not asked for again until that changes.
+    refused: Vec<(Provider, String, String)>,
 }
 
 impl Session {
-    /// The model picked in Settings for `provider`, unless it refused it ("" for its own default).
+    /// The model `provider` answers with ("" for its CLI's own default); see `choice`.
     fn model(&self, provider: Provider) -> String {
+        self.choice(provider).0
+    }
+
+    /// The model picked in Settings for `provider` (or its default), unless its plan lacks it or it
+    /// refused it: then the default, and the pick it stands in for. The pick is never changed.
+    fn choice(&self, provider: Provider) -> (String, Option<String>) {
         let context = &self.context;
         let picked = match provider {
             Provider::Agy => &context.agy_model,
             Provider::Claude => &context.claude_model,
             Provider::Codex => &context.codex_model,
+            Provider::Grok => &context.grok_model,
+            Provider::Opencode => &context.opencode_model,
         };
-        let refused = self
-            .refused_model
-            .as_ref()
-            .is_some_and(|(by, model)| *by == provider && model == picked);
-        if refused {
-            String::new()
-        } else {
-            picked.clone()
+        let catalog = self
+            .catalogs
+            .get(provider.id())
+            .filter(|c| !c.models.is_empty());
+        let wanted = match provider {
+            _ if !picked.is_empty() => picked.clone(),
+            // The account's default (never Fable), else Sonnet: Claude Code's own could be Fable.
+            // Codex's, the user's own Codex's model.
+            Provider::Claude => catalog
+                .map(|c| c.default.clone())
+                .filter(|default| !default.is_empty())
+                .unwrap_or_else(|| "sonnet".into()),
+            Provider::Codex => codex::user_model().unwrap_or_default(),
+            Provider::Grok => grok::user_model().unwrap_or_default(),
+            // opencode's, the model the user's own opencode would use.
+            Provider::Opencode => opencode::user_model().unwrap_or_default(),
+            Provider::Agy => String::new(),
+        };
+        let usable = |model: &str| {
+            let signature = catalog.map(models::Catalog::signature).unwrap_or_default();
+            let refused = self.refused.iter().any(|(by, refused, then)| {
+                *by == provider && refused == model && *then == signature
+            });
+            !(provider == Provider::Claude && models::is_fable(model))
+                && catalog.is_none_or(|c| c.allows(model))
+                && !refused
+        };
+        if usable(&wanted) {
+            return (wanted, None);
         }
+        // The plan's default, else another model it has. Never "" for Claude (its default may be Fable);
+        // "" is Codex's, Grok's and opencode's own default when nothing else is left, and agy's is always on
+        // its plan.
+        let claude = if provider == Provider::Claude {
+            models::CLAUDE_ALIASES.as_slice()
+        } else {
+            &[]
+        };
+        let others = catalog.filter(|_| provider != Provider::Agy);
+        let used = std::iter::once(models::fallback(provider, catalog))
+            .chain(
+                others
+                    .into_iter()
+                    .flat_map(|c| c.models.iter().map(|m| m.id.clone())),
+            )
+            .chain(claude.iter().map(|alias| (*alias).to_owned()))
+            .find(|model| !model.is_empty() && *model != wanted && usable(model))
+            .unwrap_or_else(|| match provider {
+                Provider::Claude => "sonnet".into(),
+                _ => String::new(),
+            });
+        (used, Some(picked.clone()).filter(|p| !p.is_empty()))
+    }
+
+    /// `provider` refused the model it answered with: not asked for again (see `choice`). The model it
+    /// was, and the one to ask with instead; `None` when it was its default, with nothing else to try.
+    fn refuse(&mut self, provider: Provider) -> Option<(String, String)> {
+        let ran = self.model(provider);
+        if ran.is_empty() {
+            return None;
+        }
+        let signature = self
+            .catalogs
+            .get(provider.id())
+            .filter(|c| !c.models.is_empty())
+            .map(models::Catalog::signature)
+            .unwrap_or_default();
+        self.refused.push((provider, ran.clone(), signature));
+        let now = self.model(provider);
+        (now != ran).then_some((ran, now))
     }
 
     /// The island closed: the speech model quits; the AI stays up a while (see `KEEP_WARM`), and the
@@ -944,6 +1057,7 @@ impl Talk {
     }
 }
 
+/// The local date, by which the chat starts afresh each day.
 fn today() -> NaiveDate {
     chrono::Local::now().date_naive()
 }
@@ -971,6 +1085,7 @@ fn new_day(session: &mut Session, pruned: &mut Option<NaiveDate>) {
 
 /// Runs requests one at a time, as the D-Bus methods queue them.
 pub async fn run(iface: InterfaceRef<AssistantService>, data: Sources, mut commands: Commands) {
+    tokio::spawn(models::run(iface.clone()));
     let mut session = Session::default();
     let mut next = None;
     // Commands about the conversation that came while a request was answered, handled after it.
@@ -1045,8 +1160,10 @@ pub async fn run(iface: InterfaceRef<AssistantService>, data: Sources, mut comma
                 }
                 session.resume(today());
                 session.adopt(*context);
+                // What the plans allow, where that is due (agy's every few hours; see models.rs).
+                models::refresh(&Provider::all(), Why::Warm);
                 // A failure shows once a request needs the AI; nothing to say yet.
-                if start_brain(&mut session).await.is_ok()
+                if start_brain(&iface, &mut session).await.is_ok()
                     && let Some(brain) = session.brain.as_mut()
                 {
                     let warmed = tokio::time::timeout(START_TIMEOUT, brain.warm()).await;
@@ -1139,10 +1256,13 @@ pub async fn run(iface: InterfaceRef<AssistantService>, data: Sources, mut comma
                 let (status, text, ok) = match ended {
                     tasks::Ended::Exited(0) => ("done", format!("{}: done.", task.why), true),
                     tasks::Ended::Exited(code) => {
+                        // The chat keeps the command's own last words, for the user and the AI; the
+                        // code goes to the log.
                         let last = output.lines().last().unwrap_or_default().to_owned();
+                        warn!("{} ended with exit {code}", task.command);
                         (
                             "failed",
-                            format!("{} failed (exit {code}). {last}", task.why),
+                            format!("{} didn’t finish. {last}", task.why),
                             false,
                         )
                     }
@@ -1164,7 +1284,14 @@ pub async fn run(iface: InterfaceRef<AssistantService>, data: Sources, mut comma
                 tasks::forget(&task);
                 tasks::clean(&task);
                 show_history(&iface, &talk.chat).await;
-                if let Err(err) = AssistantService::notice(iface.signal_emitter(), &text, ok).await
+                // The alert says it in a line; why is in the chat, which a click on it opens (the
+                // shortcut may be another, or none).
+                let said = if status == "failed" {
+                    format!("{} didn’t finish. Click to see why.", task.why)
+                } else {
+                    text
+                };
+                if let Err(err) = AssistantService::notice(iface.signal_emitter(), &said, ok).await
                 {
                     warn!("could not tell how a command ended: {err}");
                 }
@@ -1249,7 +1376,7 @@ async fn turn(
             // The AI starts as you speak, to be ready by the time you finish (a slow start must not
             // hold up listening); a failure shows once it is needed.
             let recorded = {
-                let starting = start_brain(session);
+                let starting = start_brain(iface, session);
                 let recording = record(iface, commands, later);
                 tokio::pin!(starting, recording);
                 let mut started = false;
@@ -1289,15 +1416,18 @@ async fn turn(
                     let missing = format!("{err:#}").contains("not downloaded");
                     return fail(
                         iface,
-                        if missing {
-                            set_up(MODEL_MISSING, &model)
-                        } else {
-                            SPEECH_FAILED.into()
-                        },
+                        set_up(
+                            if missing {
+                                MODEL_MISSING
+                            } else {
+                                SPEECH_FAILED
+                            },
+                            &model,
+                        ),
                     )
                     .await;
                 }
-                Ok(Err(_)) => return fail(iface, SPEECH_FAILED).await,
+                Ok(Err(_)) => return fail(iface, set_up(SPEECH_FAILED, &model)).await,
                 Err(command) => return Some(command),
             }
         }
@@ -1307,7 +1437,7 @@ async fn turn(
         return fail(iface, NOTHING_HEARD).await;
     }
 
-    let started = start_brain(session).await;
+    let started = start_brain(iface, session).await;
     let provider = session.provider.map_or("", Provider::id);
     if let Err(failure) = started {
         publish(iface, |state| state.provider = provider.into()).await;
@@ -1336,9 +1466,10 @@ async fn turn(
         .await
         .unwrap_or_default();
     let data = format!("{facts}\n{}", data.summary().await);
-    let prompt = session.prompt(&text, &data);
-    let brain = session.brain.as_mut().expect("started above");
-    let provider = brain.provider();
+    let mut prompt = session.prompt(&text, &data);
+    let provider = session.brain.as_ref().expect("started above").provider();
+    // A conversation this request begins (none to resume): a refused model starts it afresh.
+    let began_here = session.conversation.is_none();
     let (activity, mut steps) = mpsc::unbounded_channel();
     let (draft, mut drafts) = mpsc::unbounded_channel();
     let (cards, mut card_updates) = mpsc::unbounded_channel();
@@ -1348,20 +1479,53 @@ async fn turn(
         draft: &draft,
         cards: &cards,
     };
-    let asked = tokio::time::timeout(RUN_TIMEOUT, agent::think(brain, &prompt, &out, &desk));
-    let result = drive(
-        asked,
-        commands,
-        later,
-        &mut steps,
-        &mut drafts,
-        &mut card_updates,
-        &mut acts,
-        iface,
-        &mut session.open,
-    )
-    .await;
-    session.conversation = session.brain.as_ref().and_then(Brain::conversation);
+    let mut retried = false;
+    let result = loop {
+        let brain = session.brain.as_mut().expect("started above");
+        let asked = tokio::time::timeout(RUN_TIMEOUT, agent::think(brain, &prompt, &out, &desk));
+        let result = drive(
+            asked,
+            commands,
+            later,
+            &mut steps,
+            &mut drafts,
+            &mut card_updates,
+            &mut acts,
+            iface,
+            &mut session.open,
+        )
+        .await;
+        session.conversation = session.brain.as_ref().and_then(Brain::conversation);
+        // A model the plan no longer has: asked again at once with the default, so an answer comes.
+        let refused = match &result {
+            Ok(Ok(Err(err))) => retry_model(session, provider, err, retried),
+            _ => None,
+        };
+        let Some((from, to)) = refused else {
+            break result;
+        };
+        retried = true;
+        warn!(
+            "{} refused {from}; asking again with {}",
+            provider.name(),
+            or(&to, "its default")
+        );
+        // A conversation begun by this request alone starts afresh, asked as a first request again;
+        // an older one (restored too) goes on.
+        if began_here {
+            session.drop_conversation();
+            prompt = session.prompt(&text, &data);
+        } else {
+            session.brain = None;
+        }
+        if let Err(failure) = start_brain(iface, session).await {
+            return fail(iface, failure).await;
+        }
+        // Starting told of a pick that went; the default refused is told here.
+        if session.choice(provider).1.is_none() {
+            tell_switch(iface, provider, Some(&from), &to).await;
+        }
+    };
     let too_long = || {
         let error = format!("{} took too long", provider.name());
         Failure::from((error.as_str(), "Try again, or ask for less at once."))
@@ -1409,10 +1573,12 @@ async fn turn(
             warn!("{} failed: {err:#}", provider.name());
             session.brain = None;
             let failure = brain::explain(provider, &format!("{err:#}"));
-            // A conversation that broke for no known reason may break each time it is resumed: the next
-            // request starts a new one. Offline, signed out or out of quota, it is kept.
+            // A conversation that broke for no known reason may break on every resume: the next request starts
+            // afresh, with the job and the user's data. Offline, signed out or out of quota, it is kept.
             if failure.error == brain::UNKNOWN {
-                session.conversation = None;
+                session.drop_conversation();
+                // Not resumed after a restart either: it is deleted.
+                talk.save(session);
             }
             fail(iface, model_refused(session, provider, failure)).await
         }
@@ -1430,9 +1596,8 @@ async fn turn(
 
 /// A model the AI refused is not asked for again: its own default answers the next request.
 fn model_refused(session: &mut Session, provider: Provider, mut failure: Failure) -> Failure {
-    let model = session.model(provider);
-    if failure.error.ends_with("can’t use that model") && !model.is_empty() {
-        session.refused_model = Some((provider, model));
+    if refuses_model(&failure) && session.refuse(provider).is_some() {
+        models::refresh(&[provider], Why::Refused);
         failure.hint =
             "Ask again: it answers with its own default model now, or pick another in Settings."
                 .into();
@@ -1440,14 +1605,61 @@ fn model_refused(session: &mut Session, provider: Provider, mut failure: Failure
     failure
 }
 
+/// Whether `failure` is the AI saying it cannot use the model it was asked with.
+fn refuses_model(failure: &Failure) -> bool {
+    failure.error.ends_with("can’t use that model")
+}
+
+/// `err` was `provider` refusing its model: the one it was and the one to ask with again at once,
+/// unless that was tried already (`retried`) or there is none.
+fn retry_model(
+    session: &mut Session,
+    provider: Provider,
+    err: &anyhow::Error,
+    retried: bool,
+) -> Option<(String, String)> {
+    let refused = refuses_model(&brain::explain(provider, &format!("{err:#}")));
+    if !refused {
+        return None;
+    }
+    // The plan may have changed: its models are looked at again, also when nothing is left to retry with.
+    models::refresh(&[provider], Why::Refused);
+    if retried {
+        return None;
+    }
+    session.refuse(provider)
+}
+
+/// Tells the island that `provider` answers with `used` instead of `instead_of` (once per pick; `None`:
+/// what was picked, which a later stand-in is told anew after).
+async fn tell_switch(
+    iface: &InterfaceRef<AssistantService>,
+    provider: Provider,
+    instead_of: Option<&str>,
+    used: &str,
+) {
+    let Some((plan, picked, used)) = models::tell(provider, instead_of, used) else {
+        return;
+    };
+    let emitter = iface.signal_emitter();
+    if let Err(err) =
+        AssistantService::model_switched(emitter, provider.id(), &plan, &picked, &used).await
+    {
+        warn!("could not tell of the model used instead: {err}");
+    }
+}
+
 /// Starts the AI picked in Settings unless it runs, resuming the conversation it had with it.
 /// Another AI picked meanwhile starts a new conversation.
-async fn start_brain(session: &mut Session) -> Result<(), Failure> {
+async fn start_brain(
+    iface: &InterfaceRef<AssistantService>,
+    session: &mut Session,
+) -> Result<(), Failure> {
     let wanted = or(&session.context.provider, "auto");
     let provider = Provider::pick(wanted).ok_or_else(|| {
         Failure::from((
             "No AI is set up",
-            "Install Claude Code, Codex or Antigravity (agy) and sign in, then pick it in Settings.",
+            "Install Claude Code, Codex, Grok, opencode or Antigravity (agy) and sign in, then pick it in Settings.",
         ))
     })?;
     if session.provider != Some(provider) {
@@ -1459,7 +1671,8 @@ async fn start_brain(session: &mut Session) -> Result<(), Failure> {
         return Ok(());
     }
     let workspace = data_dir().join("assistant");
-    let model = session.model(provider);
+    session.catalogs = models::current();
+    let (model, instead_of) = session.choice(provider);
     let instructions = session.instructions();
     let started = Brain::start(
         provider,
@@ -1479,9 +1692,11 @@ async fn start_brain(session: &mut Session) -> Result<(), Failure> {
         brain::explain(provider, &format!("{err:#}"))
     })?;
     session.brain = Some(brain);
+    tell_switch(iface, provider, instead_of.as_deref(), &model).await;
     Ok(())
 }
 
+/// How listening ended.
 enum Recorded {
     Audio(Vec<i16>),
     Nothing,
@@ -1492,6 +1707,11 @@ enum Recorded {
 
 /// Below this level a chunk is digital silence, as from a muted microphone.
 const SILENT_RMS: f32 = 1e-4;
+
+/// An RMS level (0..1) in dB below full scale.
+fn decibels(rms: f32) -> f32 {
+    20.0 * rms.max(1e-6).log10()
+}
 
 /// Records until the user stops speaking; `None` when nothing was said.
 async fn record(
@@ -1535,13 +1755,28 @@ async fn record(
                     Verdict::Listening => {}
                     Verdict::Done => break,
                     Verdict::NoSpeech if loudest < SILENT_RMS => return Ok(Recorded::Muted),
-                    Verdict::NoSpeech => return Ok(Recorded::Nothing),
+                    Verdict::NoSpeech => {
+                        // Said in the log, for a microphone too quiet to tell from the room.
+                        info!(
+                            "heard no speech: loudest {:.0} dB, the room {:.0} dB",
+                            decibels(loudest),
+                            decibels(endpointer.room())
+                        );
+                        return Ok(Recorded::Nothing);
+                    }
                 }
             }
             command = commands.recv() => match command {
                 // Tapped to finish: answer what was said, if anything was.
                 Some(Command::Stop) if endpointer.heard_speech() => break,
-                Some(Command::Stop) => return Ok(Recorded::Nothing),
+                Some(Command::Stop) => {
+                    info!(
+                        "stopped before any speech was heard: loudest {:.0} dB, the room {:.0} dB",
+                        decibels(loudest),
+                        decibels(endpointer.room())
+                    );
+                    return Ok(Recorded::Nothing);
+                }
                 Some(Command::End | Command::Cancel) | None => return Err(Command::End),
                 // Typed instead: the recording gives way to it.
                 Some(ask @ Command::Ask(..)) => return Err(ask),
@@ -1556,9 +1791,8 @@ async fn record(
     })
 }
 
-/// Waits for the AI's answer, showing each step it takes on the island and handing the extension the
-/// desktop actions it takes mid-way (see `Results`). The island closing (End) leaves it to carry on;
-/// only Cancel stops it, and comes back as End, which ends the conversation's turn.
+/// Waits for the AI's answer, showing each step and handing the extension its desktop actions (see `Results`).
+/// Closing the island (End) lets it carry on; only Cancel stops it, coming back as End to close the turn.
 #[allow(clippy::too_many_arguments)]
 async fn drive<T>(
     future: impl Future<Output = T>,
@@ -1668,7 +1902,7 @@ fn hold(command: Command, later: &mut VecDeque<Command>) {
 
 const NOT_SET_UP: (&str, &str) = (
     "Voice isn’t set up",
-    "Set up downloads the speech model once (or run isle-setup-voice).",
+    "Set up downloads speech recognition, once.",
 );
 const NOTHING_HEARD: (&str, &str) = ("Didn’t catch that", "Press Super+I and speak again.");
 const MUTED: (&str, &str) = (
@@ -1677,7 +1911,7 @@ const MUTED: (&str, &str) = (
 );
 const MODEL_MISSING: (&str, &str) = (
     "Speech model not downloaded",
-    "Set up downloads the one chosen in Settings (or run isle-setup-voice).",
+    "Set up downloads the one chosen in Settings.",
 );
 
 /// `failure`, fixed by setting up speech recognition with `model`.
@@ -1690,13 +1924,14 @@ fn set_up(failure: (&str, &str), model: &str) -> Failure {
 }
 const SPEECH_FAILED: (&str, &str) = (
     "Speech recognition failed",
-    "Try again; if it keeps failing, run isle-setup-voice.",
+    "Try again. If it keeps failing, Set up puts it right.",
 );
 const NO_MIC: (&str, &str) = (
     "No microphone",
     "Check that a microphone is connected and not muted.",
 );
 
+/// Shows the error and its hint in place of the request; `None`, so a caller can return it.
 async fn fail(
     iface: &InterfaceRef<AssistantService>,
     failure: impl Into<Failure>,
@@ -1776,6 +2011,7 @@ async fn show_history(iface: &InterfaceRef<AssistantService>, chat: &Chat) {
     }
 }
 
+/// Changes the state and tells the island, unless nothing changed.
 async fn publish(iface: &InterfaceRef<AssistantService>, update: impl FnOnce(&mut State)) {
     let mut service = iface.get_mut().await;
     // Unchanged (a running command's poll with nothing new), it is not serialised and sent to the shell.
@@ -1799,6 +2035,12 @@ pub fn report() -> String {
             Some(path) if provider.signed_in() => {
                 format!("  {name}: {} (signed in)", path.display())
             }
+            // OpenCode's free models need no sign-in.
+            Some(path) if provider == Provider::Opencode => format!(
+                "  {name}: {} (free models; `{}` for your own providers)",
+                path.display(),
+                provider.sign_in_command()
+            ),
             Some(path) => format!(
                 "  {name}: {} (not signed in: run `{}`)",
                 path.display(),
@@ -1809,6 +2051,7 @@ pub fn report() -> String {
     lines.join("\n")
 }
 
+/// `value`, or `fallback` when it is empty.
 fn or<'a>(value: &'a str, fallback: &'a str) -> &'a str {
     if value.is_empty() { fallback } else { value }
 }
@@ -1841,6 +2084,143 @@ mod tests {
         // Another model picked in Settings is tried.
         session.context.codex_model = "gpt-8".into();
         assert_eq!(session.model(Provider::Codex), "gpt-8");
+    }
+
+    /// A catalog of `models` (ids, named as themselves), `default` the first; for `plan`.
+    fn catalog(plan: &str, models: &[&str]) -> models::Catalog {
+        models::Catalog {
+            plan: plan.into(),
+            default: models[0].into(),
+            default_name: models[0].into(),
+            models: models
+                .iter()
+                .map(|id| models::Model {
+                    id: (*id).into(),
+                    name: (*id).into(),
+                })
+                .collect(),
+            checked_ms: 1,
+        }
+    }
+
+    #[test]
+    fn a_pick_the_plan_lacks_gives_way_to_the_default_until_it_has_it() {
+        let mut session = Session::default();
+        session.context.codex_model = "gpt-6-astra".into();
+        // Not known yet: the pick is tried.
+        assert_eq!(
+            session.choice(Provider::Codex),
+            ("gpt-6-astra".into(), None)
+        );
+        let free = catalog("Free", &["gpt-6-luna", "gpt-5.6-terra", "gpt-5.6-luna"]);
+        session.catalogs.insert("codex".into(), free);
+        assert_eq!(
+            session.choice(Provider::Codex),
+            ("gpt-6-luna".into(), Some("gpt-6-astra".into()))
+        );
+        // Settings keeps the pick; back on Pro, it answers with it again.
+        assert_eq!(session.context.codex_model, "gpt-6-astra");
+        let pro = catalog("Pro", &["gpt-6.1-sol", "gpt-6-astra", "gpt-6-luna"]);
+        session.catalogs.insert("codex".into(), pro);
+        assert_eq!(
+            session.choice(Provider::Codex),
+            ("gpt-6-astra".into(), None)
+        );
+        // An agy model gone from its list: agy's own default.
+        session.context.agy_model = "gemini-old".into();
+        session.catalogs.insert(
+            "agy".into(),
+            models::Catalog {
+                default: String::new(),
+                ..catalog("", &["gemini-3.8-flash-low"])
+            },
+        );
+        assert_eq!(
+            session.choice(Provider::Agy),
+            (String::new(), Some("gemini-old".into()))
+        );
+    }
+
+    #[test]
+    fn claude_never_answers_with_fable() {
+        let mut session = Session::default();
+        // Its default with no catalog yet: Sonnet, as Claude Code's own could be Fable; Fable picked by hand: Opus.
+        assert_eq!(session.model(Provider::Claude), "sonnet");
+        session.context.claude_model = "fable".into();
+        assert_eq!(
+            session.choice(Provider::Claude),
+            ("opus".into(), Some("fable".into()))
+        );
+        // The account's default, as the catalog has it (one that is Fable stands as Opus there).
+        let team = catalog("Team", &["opus", "sonnet", "haiku"]);
+        session.catalogs.insert("claude".into(), team);
+        session.context.claude_model = String::new();
+        assert_eq!(session.choice(Provider::Claude), ("opus".into(), None));
+        session.context.claude_model = "haiku".into();
+        assert_eq!(session.model(Provider::Claude), "haiku");
+        // Every model refused but one: that one; none left: Sonnet, never Claude Code's own (maybe Fable).
+        session.context.claude_model = String::new();
+        let refused = anyhow::anyhow!("model: opus is not found");
+        assert_eq!(
+            retry_model(&mut session, Provider::Claude, &refused, false),
+            Some(("opus".into(), "sonnet".into()))
+        );
+        assert_eq!(
+            retry_model(&mut session, Provider::Claude, &refused, false),
+            Some(("sonnet".into(), "haiku".into()))
+        );
+        assert_eq!(
+            retry_model(&mut session, Provider::Claude, &refused, false),
+            Some(("haiku".into(), "sonnet".into()))
+        );
+    }
+
+    #[test]
+    fn a_refused_model_is_asked_again_at_once_with_the_default() {
+        let mut session = Session::default();
+        session.context.codex_model = "gpt-6-astra".into();
+        // The catalog still lists it (from before the plan changed), but Codex refuses it.
+        let stale = catalog("Pro", &["gpt-6.1-sol", "gpt-6-astra"]);
+        session.catalogs.insert("codex".into(), stale.clone());
+        let refused = anyhow::anyhow!(
+            "The model `gpt-6-astra` does not exist or you do not have access to it."
+        );
+        assert_eq!(
+            retry_model(&mut session, Provider::Codex, &refused, false),
+            Some(("gpt-6-astra".into(), "gpt-6.1-sol".into()))
+        );
+        assert_eq!(
+            session.choice(Provider::Codex),
+            ("gpt-6.1-sol".into(), Some("gpt-6-astra".into()))
+        );
+        // Once per request; and any other failure is no reason to.
+        assert_eq!(
+            retry_model(&mut session, Provider::Codex, &refused, true),
+            None
+        );
+        let offline = anyhow::anyhow!("dial tcp: lookup chatgpt.com: no such host");
+        assert_eq!(
+            retry_model(&mut session, Provider::Codex, &offline, false),
+            None
+        );
+        // The default refused too: its CLI's own choice is all that is left.
+        assert_eq!(
+            retry_model(&mut session, Provider::Codex, &refused, false),
+            Some(("gpt-6.1-sol".into(), String::new()))
+        );
+        assert_eq!(
+            retry_model(&mut session, Provider::Codex, &refused, false),
+            None
+        );
+        // A plan that changed since: the pick is tried again.
+        session.catalogs.insert(
+            "codex".into(),
+            catalog("Pro (More)", &["gpt-6.1-sol", "gpt-6-astra"]),
+        );
+        assert_eq!(
+            session.choice(Provider::Codex),
+            ("gpt-6-astra".into(), None)
+        );
     }
 
     #[test]

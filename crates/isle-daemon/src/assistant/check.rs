@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
-//! `check`: commands that only look (which Linux, what is installed, the battery, power mode, network,
-//! sound, logs, hardware, what runs), run at once for the AI without asking the user, so it can find out
-//! what is wrong before it says. Only the shapes listed here run, as a program with its arguments, never
-//! through a shell, so nothing in them can chain another command, write or change anything.
+//! `check`: commands that only look (packages, battery, network, sound, logs, hardware), run for the AI without
+//! asking. Only the shapes listed here run, never through a shell, so none can chain, write or change anything.
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -302,9 +301,8 @@ const JOURNAL: &[&str] = &[
     "--no-hostname",
 ];
 
-/// Commands of several words (`nmcli radio wifi`): the program, the words it starts with, and what may
-/// follow them. The longest start that fits counts, so `nmcli radio wifi off` is `radio wifi` and a word
-/// more, which `Rest::None` refuses.
+/// Commands of several words: the program, the words it starts with, and what may follow. The longest start
+/// counts, so `nmcli radio wifi off` is `radio wifi` and a word more, which `Rest::None` refuses.
 const SHAPES: &[(&str, &str, Rest)] = &[
     ("nmcli", "", Rest::None),
     ("nmcli", "general", Rest::None),
@@ -813,6 +811,7 @@ pub async fn run(command: &str) -> String {
     }
 }
 
+/// Runs it in a plain C locale with no pager, stopped after `TIMEOUT`: exit code and the output's end, secrets hidden.
 async fn output(program: &Path, args: &[String]) -> anyhow::Result<(i32, String)> {
     let mut command = Command::new(program);
     // A Node program (npm, codex) finds the Node installed beside it.

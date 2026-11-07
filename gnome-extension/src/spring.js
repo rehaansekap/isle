@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 // Damped springs drive every island animation: unlike fixed-duration easing, a spring can be
 // retargeted mid-flight and keeps its velocity, so the island never jolts.
@@ -18,7 +19,9 @@ const MAX_FRAME = 0.25;
 const REST_DISTANCE = 0.25;
 const REST_SPEED = 2;
 
+/** One animated value pulled toward its target by a damped spring. */
 export class Spring {
+    /** Starts at rest on `value`; `config` sets stiffness and damping. */
     constructor(value, config = ISLAND) {
         this.value = value;
         this.target = value;
@@ -26,6 +29,7 @@ export class Spring {
         this.config = config;
     }
 
+    /** Retargets mid-flight, keeping the current velocity. */
     setTarget(target, config = this.config) {
         this.target = target;
         this.config = config;
@@ -37,6 +41,7 @@ export class Spring {
         this.velocity = 0;
     }
 
+    /** Whether it is close and slow enough to count as at rest. */
     get settled() {
         return Math.abs(this.value - this.target) < REST_DISTANCE &&
             Math.abs(this.velocity) < REST_SPEED;
@@ -64,6 +69,7 @@ export class Spring {
 
 /** Steps springs once per frame of `actor`'s stage view, calling `onFrame` each step, until all rest. */
 export class SpringDriver {
+    /** Ties a frame clock to `actor`; nothing runs until start(). */
     constructor(actor, springs, onFrame) {
         this._springs = springs;
         this._onFrame = onFrame;
@@ -78,6 +84,7 @@ export class SpringDriver {
         return this._timeline?.is_playing() ?? false;
     }
 
+    /** Starts stepping on the next frame, if not running already. */
     start() {
         if (this._timeline.is_playing())
             return;
@@ -85,6 +92,7 @@ export class SpringDriver {
         this._timeline.start();
     }
 
+    /** Steps every spring by the real time since the last frame; stops once all rest. */
     _tick() {
         const now = GLib.get_monotonic_time();
         const dt = (now - this._lastFrame) / 1e6;
@@ -98,6 +106,7 @@ export class SpringDriver {
             this._timeline.stop();
     }
 
+    /** Stops and frees the frame clock. */
     destroy() {
         this._timeline.stop();
         this._timeline.run_dispose();

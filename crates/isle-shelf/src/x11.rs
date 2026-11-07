@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! Turning GTK's window into an override-redirect X11 window and placing it.
 
@@ -61,6 +62,7 @@ fn sync_gdk(window: &gtk::Window) {
     WidgetExt::display(window).sync();
 }
 
+/// The X11 window id behind GTK's window; an error before it is realized or off X11.
 fn xid(window: &gtk::Window) -> Result<Window, Error> {
     let surface = window
         .surface()

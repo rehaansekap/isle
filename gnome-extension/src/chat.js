@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 // The conversation above the assistant's pill (what you said in bubbles, its answers, the commands it ran),
 // and the card that asks before a command that changes the system runs.
@@ -35,6 +36,7 @@ const STATUS = {
     stopped: ['isle-stop-symbolic', 'Stopped', 'isle-card-denied'],
 };
 
+// A label in one call.
 const label = (text, styleClass, params = {}) => new St.Label({text, style_class: styleClass, ...params});
 
 /** How long (ms) "Copied" shows in place of the conversation's title. */
@@ -58,9 +60,8 @@ function copy(text) {
     St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, text);
 }
 
-// Text that can be selected, as in a terminal: once a selection settles (the button up), it is copied, and
-// `copied` says so; `settled` follows every press, so the keys can go back to the field. Watched through the
-// selection itself: GNOME 49+ gives text no button events of its own.
+// Selectable text that copies a settled selection, as a terminal does; `settled` follows every press so the keys
+// go back to the field. Watched through the selection, as GNOME 49+ gives text no button events of its own.
 function copyable(actor, copied, settled) {
     const text = actor.clutter_text;
     text.set({selectable: true, reactive: true});
@@ -110,17 +111,20 @@ export const elapsed = seconds => `${Math.floor(seconds / 60)}:${String(Math.flo
 // A box no wider than `max` (CSS px), as tall as its text wrapped at that width (St would measure one line).
 const Bubble = GObject.registerClass(
 class Bubble extends St.BoxLayout {
+    /** `max` in CSS pixels. */
     _init(params, max) {
         super._init(params);
         this._max = max;
     }
 
+    /** Never wider than `max`. */
     vfunc_get_preferred_width(forHeight) {
         const [min, natural] = super.vfunc_get_preferred_width(forHeight);
         const max = px(this._max);
         return [Math.min(min, max), Math.min(natural, max)];
     }
 
+    /** Measured at the width it will really get, so wrapped lines count. */
     vfunc_get_preferred_height(forWidth) {
         const max = px(this._max);
         const width = forWidth < 0 ? max : Math.min(forWidth, max);
@@ -133,6 +137,7 @@ class Bubble extends St.BoxLayout {
 // assistant's own frame clock (`tick`), so it costs nothing of its own.
 const Sweep = GObject.registerClass(
 class Sweep extends St.DrawingArea {
+    /** Three pixels tall at any scale. */
     _init() {
         super._init({style_class: 'isle-card-sweep', x_expand: true});
         onUiScale(this, scale => (this.height = 3 * scale));
@@ -140,12 +145,14 @@ class Sweep extends St.DrawingArea {
         this.connect('repaint', area => this._paint(area));
     }
 
+    /** `time` in seconds; repaints only while on screen. */
     tick(time) {
         this._time = time;
         if (this.mapped)
             this.queue_repaint();
     }
 
+    /** A faint rounded track with a soft highlight moving left to right. */
     _paint(area) {
         const cr = area.get_context();
         const [width, height] = area.get_surface_size();
@@ -166,10 +173,8 @@ class Sweep extends St.DrawingArea {
     }
 });
 
-/**
- * An answer's light Markdown as Pango markup: **bold**, `code` and "- " lists; a [link](url) as its words
- * alone; everything else as written. The text is escaped first, so nothing in it can be read as markup.
- */
+/** An answer's light Markdown as Pango markup: **bold**, `code`, "- " lists, a [link](url) as its words.
+ * Escaped first, so nothing in the text itself can be read as markup. */
 export function answerMarkup(text) {
     return text.replace(/\[([^\]\n]+)\]\((?:https?:\/\/|www\.)[^)\s]+\)/g, '$1').split('\n').map(line => {
         const bullet = /^\s*[-*•]\s+/;
@@ -246,9 +251,8 @@ function keyButton(text, key, styleClass, onClick) {
     return button;
 }
 
-// The card for one command, set straight on the pill: no box of its own. Waiting: what it is for and a line on it, the command coloured as a shell would, then what to know (a password, a script from the web) on
-// the left and Deny or Run (Esc, Enter) on the right. Running: how long, its last lines as they print, and Stop.
-// Ended: a single line, done, failed (with the error), denied or stopped.
+// The card for one command, set straight on the pill. Waiting: why, the coloured command, one risk, Deny and Run;
+// running: how long, its last lines and Stop; ended: one line saying how it went.
 export const CommandCard = GObject.registerClass({
     Signals: {
         // Run (true) or Deny (false), pressed.
@@ -256,6 +260,7 @@ export const CommandCard = GObject.registerClass({
         'stop': {},
     },
 }, class CommandCard extends St.BoxLayout {
+    /** Head, terminal and foot, all made once and shown or hidden per state. */
     _init() {
         super._init({...VERTICAL, style_class: 'isle-card', x_expand: true});
         this.set_pivot_point(0.5, 0.5);
@@ -314,10 +319,8 @@ export const CommandCard = GObject.registerClass({
         });
     }
 
-    /**
-     * Shows `card`: {command, why, detail, risks, status (waiting, running, done, failed, denied, stopped), output,
-     * seconds, exit}.
-     */
+    /** Shows `card`: {command, why, detail, risks, status, output, seconds, exit}; status is waiting, running,
+     * done, failed, denied or stopped. */
     setCard(card) {
         // Another card (the last one hidden while it waited) starts its own wait.
         const previous = card.id === this._id ? this._state : null;
@@ -362,10 +365,9 @@ export const CommandCard = GObject.registerClass({
         this._status.visible = ended;
         if (ended) {
             this._statusIcon.gicon = icon(iconName);
-            // Short, so the command keeps its line: a tick and how long, the exit code, or the word.
+            // Short, so the command keeps its line: a tick and how long, or the word.
             const done = card.status === 'done' && card.seconds >= 1 ? elapsed(card.seconds) : null;
-            const failed = card.status === 'failed' && card.exit ? `exit ${card.exit}` : null;
-            this._statusText.text = done ?? failed ?? text;
+            this._statusText.text = done ?? text;
             this._status.style_class = `isle-card-status ${styleClass}`;
         }
         this._foot.visible = waiting || running;
@@ -381,6 +383,7 @@ export const CommandCard = GObject.registerClass({
         }
     }
 
+    /** The card's state as last set. */
     get status() {
         return this._state;
     }
@@ -400,6 +403,7 @@ export const CommandCard = GObject.registerClass({
         this._showStop(true);
     }
 
+    /** Back to a plain Stop. */
     _disarmStop() {
         if (this._stopArmed)
             GLib.source_remove(this._stopArmed);
@@ -407,6 +411,7 @@ export const CommandCard = GObject.registerClass({
         this._showStop(false);
     }
 
+    /** "Stop anyway" and the warning while armed. */
     _showStop(armed) {
         if (this._destroyed)
             return;
@@ -472,6 +477,7 @@ export const ChatView = GObject.registerClass({
     // `settled`: a press on its text is over (a selection copied, or a plain click), so the keys go back.
     Signals: {'new-chat': {}, 'close': {}, 'settled': {}},
 }, class ChatView extends St.BoxLayout {
+    /** Header with New chat and Hide, then the scrolling list that keeps to its end. */
     _init() {
         super._init({...VERTICAL, style_class: 'isle-chat', x_expand: true});
         const header = new St.BoxLayout({style_class: 'isle-chat-header'});
@@ -527,10 +533,8 @@ export const ChatView = GObject.registerClass({
         this.setItems(this._items);
     }
 
-    /**
-     * The messages: [{role: user | assistant | command, text, spoken, command, status, at (ms)}]. A gap of a while
-     * gets the time above it; its answers after yours get its face.
-     */
+    /** The messages: [{role: user | assistant | command, text, spoken, command, status, at (ms)}]. A gap of a
+     * while gets the time above it; its answers after yours get its face. */
     setItems(items) {
         // Those after the ones shown before are new: they rise into place.
         const known = this._items.length && items.length >= this._items.length && items[0] === this._items[0]
@@ -555,10 +559,12 @@ export const ChatView = GObject.registerClass({
         this._title.text = 'Conversation';
     }
 
+    /** Messages shown. */
     get count() {
         return this._items.length;
     }
 
+    /** One message: your bubble, a command line, or an answer with or without the face. */
     _row(item, withFace) {
         if (item.role === 'user') {
             const bubble = new Bubble({style_class: 'isle-chat-user', x_align: Clutter.ActorAlign.END}, BUBBLE_MAX);

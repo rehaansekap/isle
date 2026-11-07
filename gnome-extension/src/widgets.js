@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 // Small building blocks shared by the island's views.
 
@@ -7,14 +8,18 @@ import GdkPixbuf from 'gi://GdkPixbuf';
 import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import Gio from 'gi://Gio';
+import Graphene from 'gi://Graphene';
 import Pango from 'gi://Pango';
 import St from 'gi://St';
 
 import {onUiScale, px, uiScale} from './compat.js';
+import * as Theme from './theme.js';
 
 let iconDir = null;
 /** Icons by name, made once: a GIcon never changes, and looking for the file is a disk access. */
 const icons = new Map();
+/** The desktop's icon theme, asked by `isSymbolic` (made when first needed). */
+let iconTheme = null;
 
 /** Tells `icon()` where the extension's bundled icons live. */
 export function setIconDir(dir) {
@@ -22,14 +27,14 @@ export function setIconDir(dir) {
     icons.clear();
 }
 
-/** GNOME's icons that Isle draws itself (icons/), in SF Symbols' manner; a name or the start of one. */
+/** GNOME's icons that Isle draws itself (icons/), in one rounded, even-weight style; a name or the start of one. */
 const OWN_ICONS = {
     'audio-volume-muted': 'isle-speaker-off-symbolic',
     'audio-volume-low': 'isle-speaker-1-symbolic',
     'audio-volume-medium': 'isle-speaker-2-symbolic',
     'audio-volume-high': 'isle-speaker-3-symbolic',
     'audio-volume-overamplified': 'isle-speaker-3-symbolic',
-    'audio-speakers': 'isle-speaker-2-symbolic',
+    'audio-speakers': 'isle-speaker-device-symbolic',
     'audio-card': 'isle-speaker-2-symbolic',
     'audio-headphones': 'isle-headphones-symbolic',
     'audio-headset': 'isle-headphones-symbolic',
@@ -57,6 +62,9 @@ const OWN_ICONS = {
     'input-mouse': 'isle-mouse-symbolic',
     'input-keyboard': 'isle-keyboard-symbolic',
     'phone': 'isle-phone-symbolic',
+    'input-gaming': 'isle-gamepad-symbolic',
+    'input-tablet': 'isle-tablet-symbolic',
+    'computer': 'isle-laptop-symbolic',
     'dialog-warning': 'isle-warning-symbolic',
     'dialog-information': 'isle-info-symbolic',
     'software-update-available': 'isle-update-symbolic',
@@ -73,6 +81,20 @@ function ownName(name) {
         (base.startsWith(`${k}-`) && !OTHER_STATE.test(base.slice(k.length + 1))));
     return key ? OWN_ICONS[key] : null;
 }
+
+/** Whether Isle draws GNOME's icon `name` itself (see `OWN_ICONS`). */
+export function hasOwnIcon(name) {
+    return ownName(name) !== null;
+}
+
+/** A Bluetooth device's icon by its kind (BlueZ's "audio-headphones"): one Isle has no icon of its own for (a
+ * printer, a watch) gets Bluetooth's, in Isle's style. */
+export function deviceIcon(name) {
+    return hasOwnIcon(name) ? name : 'isle-bluetooth-symbolic';
+}
+
+/** At or under this percentage a battery is low: its ring turns red. */
+export const LOW_BATTERY = 20;
 
 /** `gicon` in Isle's own style when Isle draws it (GNOME's OSD and device icons), else as it is. */
 export function ownIcon(gicon) {
@@ -92,9 +114,42 @@ export function icon(name) {
     return icons.get(name);
 }
 
+/** A label centred vertically in its row. */
 export function label(text, styleClass, props = {}) {
     return new St.Label({text, style_class: styleClass, y_align: Clutter.ActorAlign.CENTER, ...props});
 }
+
+/** Its wrapping, ellipsizing label (aligned FILL) no taller than `lines` lines: given that height, Pango ends the last
+ * in "…". */
+export const Lines = GObject.registerClass(
+class Lines extends St.Bin {
+    _init(child, lines, props = {}) {
+        super._init({child, x_expand: true, ...props});
+        this._lines = lines;
+    }
+
+    /** As many of its lines as there are, up to `lines`: counted here, as an ellipsizing label measures one
+     * (GNOME 50 and later). Never less: a scrolled list gives its rows their least height. One pixel spare. */
+    vfunc_get_preferred_height(forWidth) {
+        const [line] = super.vfunc_get_preferred_height(forWidth);
+        const text = this.child.clutter_text;
+        const layout = text.create_pango_layout(text.text);
+        // From its name: the text's own description is not ours to hold.
+        layout.set_font_description(Pango.font_description_from_string(text.font_name));
+        layout.set_wrap(Pango.WrapMode.WORD_CHAR);
+        // Asked with no width (a centring bin on GNOME 51): the label's own.
+        const width = forWidth >= 0 ? forWidth : this.child.get_preferred_width(-1)[1];
+        layout.set_width(Math.floor(width * Pango.SCALE));
+        const height = Math.ceil(line * Math.min(layout.get_line_count(), this._lines)) + 1;
+        return [height, height];
+    }
+
+    /** The label gets all of it: given that height, it wraps and ellipsizes to fill it. */
+    vfunc_allocate(box) {
+        this.set_allocation(box);
+        this.child?.allocate(this.get_theme_node().get_content_box(box));
+    }
+});
 
 /** Wraps a label over lines, breaking a long word where it must, with no hyphen added ("example.co-m"). */
 export function wrapLines(label, ellipsize = Pango.EllipsizeMode.NONE) {
@@ -119,6 +174,7 @@ export function wrapFixedLines(label, ellipsize = Pango.EllipsizeMode.NONE) {
     wrapText(label, ellipsize).set_markup(`<span insert_hyphens="false">${GLib.markup_escape_text(label.text, -1)}</span>`);
 }
 
+/** Wraps by word, breaking inside one too long for a line; returns the label's ClutterText. */
 function wrapText(label, ellipsize) {
     const text = label.clutter_text;
     text.line_wrap = true;
@@ -127,10 +183,8 @@ function wrapText(label, ellipsize) {
     return text;
 }
 
-/**
- * Fences in a bin's or fixed layout's children with two empty ends, so St never restyles a child's whole subtree
- * as it becomes or stops being the first or last one shown. Returns the end to add further children before.
- */
+/** Fences a bin's or fixed layout's children with two empty ends, so St never restyles a child's subtree as it
+ * becomes or stops being the first or last shown. Returns the end to add further children before. */
 export function fence(box) {
     box.insert_child_at_index(new Clutter.Actor(), 0);
     const end = new Clutter.Actor();
@@ -151,9 +205,8 @@ export function iconButton(iconName, styleClass, onClick, {size = 16, accessible
     return button;
 }
 
-/** A small × on the top-left corner of an alert's icon, shown under the pointer (see `revealClose`), as on
- * macOS's notifications: put over the icon, it takes no room, so nothing moves as it shows. `out` (CSS px) is
- * how far it sits out from the corner: further for a round icon, whose corner is empty. */
+/** A small × over the top-left corner of an alert's icon, shown under the pointer (see `revealClose`), taking
+ * no room. `out` (CSS px) sets it further out from the corner, for a round icon whose corner is empty. */
 export function cornerClose(onClick, {out = 8} = {}) {
     const button = iconButton('isle-close-symbolic', 'isle-corner-close', onClick, {size: 8, accessibleName: 'Close'});
     // Always there, only faded out and untouchable: showing and hiding it would restyle the icon beside it.
@@ -173,9 +226,14 @@ export function revealClose(button, shown) {
     button.ease({opacity: shown ? 255 : 0, duration: shown ? 140 : 100, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
 }
 
-/** The music bars move about this often (ms), whatever the display: each step is too small to see more of,
- * and every frame of a 144 Hz display cost the shell twice the work (the island's other motion keeps its rate). */
-const BARS_STEP_MS = 1000 / 60 - 4;
+/** The music bars move about this often (ms), whatever the display. A timer, not a timeline: a running
+ * timeline has the shell draw every frame of the display (144 a second on some), six times the CPU. */
+const BARS_STEP_MS = 1000 / 60;
+/** The recording dot's fade steps this often (ms), on a timer for the same reason. */
+const DOT_STEP_MS = 1000 / 30;
+/** Its fade: from full to this opacity and back, each way this long (ms). */
+const DOT_LOW = 110;
+const DOT_FADE_MS = 900;
 
 /** A pill-shaped text button. */
 export function pillButton(text, styleClass, onClick) {
@@ -189,15 +247,77 @@ export function pillButton(text, styleClass, onClick) {
     return button;
 }
 
-/** Opacity of disabled controls: still visible, clearly not available. */
-const DISABLED_OPACITY = 90;
+/** Lays its children out in a row at their natural sizes, going on to a line below where the next would not
+ * fit, so none is ever cut. Sized from the width it is given each time, nothing kept between. */
+export const WrapLayout = GObject.registerClass(
+class WrapLayout extends Clutter.LayoutManager {
+    /** `spacing`: between children and between lines, in stage pixels. */
+    _init(spacing = 0) {
+        super._init();
+        this._spacing = spacing;
+    }
+
+    set spacing(spacing) {
+        this._spacing = spacing;
+        this.layout_changed();
+    }
+
+    /** The lines `width` makes of the shown children: each [child, width, height], and the line's height. */
+    _lines(container, width) {
+        const lines = [];
+        let line = null, used = 0;
+        for (const child of container.get_children().filter(each => each.visible)) {
+            const [, childWidth] = child.get_preferred_width(-1);
+            const [, childHeight] = child.get_preferred_height(childWidth);
+            if (!line || used + this._spacing + childWidth > width) {
+                line = {children: [], height: 0};
+                lines.push(line);
+                used = -this._spacing;
+            }
+            line.children.push([child, childWidth, childHeight]);
+            line.height = Math.max(line.height, childHeight);
+            used += this._spacing + childWidth;
+        }
+        return lines;
+    }
+
+    vfunc_get_preferred_width(container, _forHeight) {
+        const widths = container.get_children().filter(child => child.visible).map(child => child.get_preferred_width(-1));
+        const natural = widths.reduce((sum, [, width]) => sum + width, 0) + this._spacing * Math.max(0, widths.length - 1);
+        return [Math.max(0, ...widths.map(([min]) => min)), natural];
+    }
+
+    vfunc_get_preferred_height(container, forWidth) {
+        const lines = this._lines(container, forWidth < 0 ? Infinity : forWidth);
+        const height = lines.reduce((sum, line) => sum + line.height, 0) + this._spacing * Math.max(0, lines.length - 1);
+        return [height, height];
+    }
+
+    vfunc_allocate(container, box) {
+        const width = box.get_width();
+        let y = box.y1;
+        for (const line of this._lines(container, width)) {
+            let x = box.x1;
+            for (const [child, childWidth, childHeight] of line.children) {
+                child.allocate(new Clutter.ActorBox({x1: x, y1: y, x2: x + Math.min(childWidth, width), y2: y + childHeight}));
+                x += childWidth + this._spacing;
+            }
+            y += line.height + this._spacing;
+        }
+    }
+});
+
+/** Opacity of disabled controls: still visible, clearly not available; a step more on the lighter glass. */
+const DISABLED_OPACITY = 90, DISABLED_OPACITY_SEE_THROUGH = 105;
 
 // Enables or disables a button; disabled ones stay in place, dimmed, so the layout never jumps.
 // Dimmed by opacity, not CSS colour: the bundled icons are white images that take no colour.
 export function setEnabled(button, enabled) {
+    // Kept, so a change of look dims it as that look does (see Island `refreshTheme`).
+    button._isleDisabled = !enabled;
     button.reactive = enabled;
     button.can_focus = enabled;
-    const opacity = enabled ? 255 : DISABLED_OPACITY;
+    const opacity = enabled ? 255 : Theme.translucent() ? DISABLED_OPACITY_SEE_THROUGH : DISABLED_OPACITY;
     if (!restsAt(button, 'opacity', opacity))
         button.ease({opacity, duration: 150});
 }
@@ -212,6 +332,31 @@ export function setButtonIcon(button, iconName) {
     button.child.gicon = icon(iconName);
 }
 
+/** Any wheel or touchpad direction moves `scroll`'s row sideways while it overflows; for its 'scroll-event'. */
+export function scrollSideways(scroll, event) {
+    const adjustment = scroll.hadjustment;
+    if (adjustment.upper <= adjustment.page_size)
+        return Clutter.EVENT_PROPAGATE;
+    let delta = 0;
+    switch (event.get_scroll_direction()) {
+    case Clutter.ScrollDirection.UP:
+    case Clutter.ScrollDirection.LEFT:
+        delta = -1;
+        break;
+    case Clutter.ScrollDirection.DOWN:
+    case Clutter.ScrollDirection.RIGHT:
+        delta = 1;
+        break;
+    case Clutter.ScrollDirection.SMOOTH: {
+        const [dx, dy] = event.get_scroll_delta();
+        delta = Math.abs(dx) > Math.abs(dy) ? dx : dy;
+        break;
+    }
+    }
+    adjustment.value += delta * adjustment.step_increment * 1.5;
+    return Clutter.EVENT_STOP;
+}
+
 /** A circular progress ring, optionally with a child centred inside; `progress` can be eased. */
 export const Ring = GObject.registerClass({
     Properties: {
@@ -219,6 +364,7 @@ export const Ring = GObject.registerClass({
             GObject.ParamFlags.READWRITE, 0, 1, 0),
     },
 }, class Ring extends St.Widget {
+    /** `size` in CSS pixels; `child` (a badge) sits in the middle and pops in with a sweep. */
     _init({size, lineWidth = 2.5, color = [1, 1, 1], trackOpacity = 0.18, child = null}) {
         super._init({
             layout_manager: new Clutter.BinLayout(),
@@ -253,10 +399,12 @@ export const Ring = GObject.registerClass({
         this.set_size(px(size), px(size));
     }
 
+    /** How much of the ring is drawn, 0..1. */
     get progress() {
         return this._progress;
     }
 
+    /** Clamped; repaints only for a change that shows. */
     set progress(value) {
         const clamped = Math.min(1, Math.max(0, value));
         if (Math.abs(clamped - this._progress) < 0.001)
@@ -300,6 +448,7 @@ export const Ring = GObject.registerClass({
         }
     }
 
+    /** Drops the sweep under way and starts again from `from`, the badge shrunk when starting empty. */
     _restart(from = 0) {
         this.remove_transition('progress');
         this._sweeping = null;
@@ -312,6 +461,7 @@ export const Ring = GObject.registerClass({
             this._sweep();
     }
 
+    /** Runs the waiting sweep, and pops the badge in if it is still small. */
     _sweep() {
         const fill = this._pendingFill ?? this._sweeping;
         if (!fill)
@@ -338,6 +488,7 @@ export const Ring = GObject.registerClass({
         }
     }
 
+    /** [r, g, b], each 0..1. */
     set color(rgb) {
         const color = this._color;
         if (rgb[0] === color[0] && rgb[1] === color[1] && rgb[2] === color[2])
@@ -346,6 +497,7 @@ export const Ring = GObject.registerClass({
         this._area.queue_repaint();
     }
 
+    /** The faint track, then the arc of progress from 12 o'clock. */
     _repaint(area) {
         const cr = area.get_context();
         const [width, height] = area.get_surface_size();
@@ -355,7 +507,8 @@ export const Ring = GObject.registerClass({
         cr.setLineWidth(lineWidth);
         cr.setLineCap(1); // round
 
-        cr.setSourceRGBA(r, g, b, this._trackOpacity);
+        // A track half as bright again on glass, which is lighter than black.
+        cr.setSourceRGBA(r, g, b, this._trackOpacity * (Theme.translucent() ? 1.5 : 1));
         cr.arc(width / 2, height / 2, radius, 0, 2 * Math.PI);
         cr.stroke();
 
@@ -369,9 +522,25 @@ export const Ring = GObject.registerClass({
     }
 });
 
+/** One equaliser bar. It tells Clutter it draws across its whole row, so the bars' redraws make one rectangle a
+ * frame: four small ones apart cost the shell half as much again to paint. */
+const Bar = GObject.registerClass(
+class Bar extends St.Widget {
+    vfunc_get_paint_volume(volume) {
+        const row = this.get_parent();
+        if (!row)
+            return super.vfunc_get_paint_volume(volume);
+        volume.set_origin(new Graphene.Point3D({x: -this.x, y: 0, z: 0}));
+        volume.set_width(row.width);
+        volume.set_height(this.height);
+        return true;
+    }
+});
+
 /** Equaliser bars that dance while music plays. */
 export const Bars = GObject.registerClass(
 class Bars extends St.BoxLayout {
+    /** `height` is the tallest bar, in CSS pixels. */
     _init({height = 14, count = 4} = {}) {
         super._init({style_class: 'isle-bars', y_align: Clutter.ActorAlign.CENTER});
         this._maxHeight = height;
@@ -381,7 +550,7 @@ class Bars extends St.BoxLayout {
         this._bounces = [];
         for (let i = 0; i < count; i++) {
             // Full height, scaled about its middle: a scale moves below a pixel and lays nothing out again.
-            const bar = new St.Widget({style_class: 'isle-bar', y_align: Clutter.ActorAlign.CENTER});
+            const bar = new Bar({style_class: 'isle-bar', y_align: Clutter.ActorAlign.CENTER});
             bar.set_pivot_point(0.5, 0.5);
             bar.scale_y = this._rest(i);
             // A bar's bounce pauses off screen. Each bar is watched itself: the box maps a moment before them.
@@ -391,10 +560,9 @@ class Bars extends St.BoxLayout {
             this.add_child(bar);
         }
         // One clock moves every bar: an ease per bounce made garbage many times a second.
-        this._clock = new Clutter.Timeline({actor: this, duration: 1000, repeat_count: -1});
-        this._clock.connect('new-frame', () => this._step());
+        this._timer = 0;
         this._now = 0;
-        this._steppedAt = -Infinity;
+        this._last = 0;
         this.connect('destroy', () => this._onDestroy());
         onUiScale(this, () => (this.maxHeight = this._maxHeight));
     }
@@ -407,6 +575,7 @@ class Bars extends St.BoxLayout {
         this._bars.forEach(bar => (bar.height = stageHeight));
     }
 
+    /** Bar `index`'s height at rest, as a share of the tallest. */
     _rest(index) {
         // A fixed "|ılı" silhouette when not animating.
         return [0.45, 1, 0.7, 0.35, 0.8][index % 5];
@@ -443,22 +612,24 @@ class Bars extends St.BoxLayout {
             bounce.start = -1;
             // Slowed down as ease() is.
             bounce.duration = (180 + Math.random() * 220) * settings.slow_down_factor;
-            if (!this._clock.is_playing()) {
+            if (!this._timer) {
                 this._now = 0;
-                this._steppedAt = -Infinity;
-                this._clock.start();
+                this._last = GLib.get_monotonic_time();
+                this._timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, Math.round(BARS_STEP_MS), () => {
+                    this._step();
+                    return GLib.SOURCE_CONTINUE;
+                });
             }
         } else if (!this._bounces.some(other => other.on)) {
-            this._clock.stop();
+            this._stopClock();
         }
     }
 
+    /** One tick of the shared clock: each bouncing bar moves along its curve. */
     _step() {
-        this._now += this._clock.get_delta();
-        // Frames in between change nothing, so the shell draws nothing new for them (see BARS_STEP_MS).
-        if (this._now - this._steppedAt < BARS_STEP_MS)
-            return;
-        this._steppedAt = this._now;
+        const now = GLib.get_monotonic_time();
+        this._now += (now - this._last) / 1000;
+        this._last = now;
         for (let i = 0; i < this._bounces.length; i++) {
             const bounce = this._bounces[i];
             if (!bounce.on)
@@ -477,22 +648,42 @@ class Bars extends St.BoxLayout {
         }
     }
 
+    /** Stops every bounce and the clock. */
     _stop() {
         for (const bounce of this._bounces)
             bounce.on = false;
-        this._clock.stop();
+        this._stopClock();
     }
 
+    _stopClock() {
+        if (this._timer)
+            GLib.source_remove(this._timer);
+        this._timer = 0;
+    }
+
+    /** Leaves no clock running. */
     _onDestroy() {
         this._playing = false;
         this._stop();
     }
 });
 
+/** Lets go of the icon theme `isSymbolic` asks, once Isle is turned off. */
+export function releaseIconTheme() {
+    iconTheme = null;
+}
+
 /** Whether `gicon` is a one-colour (symbolic) icon rather than an app's. */
 export function isSymbolic(gicon) {
-    if (gicon instanceof Gio.ThemedIcon)
-        return gicon.get_names().some(name => name.endsWith('-symbolic'));
+    // The name asked for: GLib adds a "-symbolic" variant to every app's icon (com.mitchellh.ghostty too),
+    // so that one counts only when the theme has nothing else (Adwaita's dialog-information).
+    if (gicon instanceof Gio.ThemedIcon) {
+        const [name] = gicon.get_names();
+        if (!name || name.endsWith('-symbolic'))
+            return Boolean(name);
+        iconTheme ??= new St.IconTheme();
+        return !iconTheme.has_icon(name) && iconTheme.has_icon(`${name}-symbolic`);
+    }
     if (gicon instanceof Gio.FileIcon)
         return Boolean(gicon.get_file().get_basename()?.includes('-symbolic'));
     return false;
@@ -591,10 +782,8 @@ export function forEachChild(path, callback, cancellable = null) {
         });
 }
 
-/**
- * A small copy of the cover at `path`, decoded and saved off the main thread, or null: St decodes a background
- * image whole in the frame that first paints it, tens of milliseconds for a big cover.
- */
+/** A small copy of the cover at `path`, decoded and saved off the main thread, or null: St decodes a background
+ * image whole in the frame that first paints it, tens of milliseconds for a big cover. */
 export const smallCover = memoByFile(async path => {
     if (!path)
         return null;
@@ -664,6 +853,7 @@ export const Art = GObject.registerClass({
     // The image changed; `showsIcon` may have too.
     Signals: {'shown': {}},
 }, class Art extends St.Bin {
+    /** `size` and `radius` in CSS pixels. */
     _init({size, radius}) {
         super._init({
             style_class: 'isle-art',
@@ -717,6 +907,7 @@ export const Art = GObject.registerClass({
         });
     }
 
+    /** The image at `path` as the background, or the placeholder for none; then emits `shown`. */
     _show(path) {
         const base = `border-radius: ${this._radius}px;`;
         if (path) {
@@ -749,10 +940,8 @@ function allocateAt(actor, x, y, width, height) {
     actor.allocate(Clutter.ActorBox.new(x, y, x + width, y + height));
 }
 
-/**
- * Motions an alert's icon makes once as it appears, as SF Symbols' effects: each a list of steps,
- * [property values, ms, easing]. Transforms only, so nothing is laid out or restyled again.
- */
+/** Motions an alert's icon makes once as it appears: steps of [values, ms, easing].
+ * Transforms only, so nothing is laid out or restyled again. */
 const MOTIONS = {
     // A small hop: notifications, an answer, a new version.
     bounce: [[{scale_x: 1.18, scale_y: 1.18}, 140, 'EASE_OUT_QUAD'], [{scale_x: 1, scale_y: 1}, 260, 'EASE_OUT_BACK']],
@@ -775,11 +964,18 @@ const RISE_DELAY = 120;
 /** Motions waiting for their actor to be on screen (GNOME skips eases on actors that are not). */
 const pendingMotions = new WeakMap();
 
-/**
- * Slides `actor` along `axis` ('x' or 'y') from `from` to `to` px over `duration` ms (after `delay`), easing
- * out, in whole pixels: a picture or text between two pixels is resampled and seems to shiver as it moves.
- * `onDone` runs once it gets there; a later slide on the same axis takes over.
- */
+/** Eases `props` of `actor` with Clutter's own implicit animation: `ease` without its callbacks and bookkeeping,
+ * which cost a page switch a millisecond per tab. A later change to the same property takes over. */
+export function easeTo(actor, props, duration, mode = Clutter.AnimationMode.EASE_OUT_QUAD) {
+    actor.save_easing_state();
+    actor.set_easing_duration(duration);
+    actor.set_easing_mode(mode);
+    actor.set(props);
+    actor.restore_easing_state();
+}
+
+/** Slides `actor` along `axis` ('x' or 'y') from `from` to `to` px, in whole pixels: between two pixels a picture
+ * or text is resampled and shivers. `onDone` runs on arrival; a later slide on the same axis takes over. */
 export function slideBy(actor, axis, from, to, {delay = 0, duration = 0, onDone = null} = {}) {
     const key = `_isleSlide${axis}`;
     const property = `translation_${axis}`;
@@ -796,7 +992,13 @@ export function slideBy(actor, axis, from, to, {delay = 0, duration = 0, onDone 
         actor.connect('destroy', () => ['x', 'y'].forEach(each => actor[`_isleSlide${each}`]?.stop()));
     }
     const timeline = new Clutter.Timeline({actor, duration, delay, progress_mode: Clutter.AnimationMode.EASE_OUT_CUBIC});
-    timeline.connect('new-frame', () => (actor[property] = Math.round(from + (to - from) * timeline.get_progress())));
+    // Only when the whole pixel changes: each write re-places the actor's whole subtree and re-picks the pointer.
+    let last = from;
+    timeline.connect('new-frame', () => {
+        const value = Math.round(from + (to - from) * timeline.get_progress());
+        if (value !== last)
+            actor[property] = last = value;
+    });
     timeline.connect('completed', () => {
         actor[property] = to;
         onDone?.();
@@ -865,6 +1067,7 @@ const WAVE_STAGGER_MS = 70;
 /** A speaker whose waves come one by one as the volume rises and go as it falls. */
 export const VolumeGlyph = GObject.registerClass(
 class VolumeGlyph extends St.Widget {
+    /** The speaker, its slashed form and three waves, stacked; `size` in CSS pixels. */
     _init({size = 16} = {}) {
         super._init({layout_manager: new Clutter.BinLayout(), x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER});
         const part = name => new St.Icon({gicon: icon(name), icon_size: size});
@@ -916,6 +1119,7 @@ class VolumeGlyph extends St.Widget {
             this._sync(fresh);
     }
 
+    /** Eases the waves and speaker to the level and mute state; `stagger` brings waves in one by one. */
     _sync(stagger) {
         const shown = this._muted ? 0 : this._count;
         this._waves.forEach((wave, index) => {
@@ -943,6 +1147,7 @@ class VolumeGlyph extends St.Widget {
 /** A thin horizontal level meter. */
 export const LevelBar = GObject.registerClass(
 class LevelBar extends St.Widget {
+    /** As wide as `width` CSS pixels at any scale. */
     _init({width, styleClass = ''}) {
         super._init({
             style_class: `isle-level ${styleClass}`,
@@ -990,6 +1195,7 @@ class LevelBar extends St.Widget {
             this._fill.width = fill;
     }
 
+    /** 0..1. */
     get level() {
         return this._level;
     }
@@ -1004,6 +1210,7 @@ class LevelBar extends St.Widget {
             this._grow();
     }
 
+    /** Eases the fill out from empty after the waiting delay. */
     _grow() {
         const delay = this._pendingGrow;
         this._pendingGrow = null;
@@ -1020,6 +1227,7 @@ class LevelBar extends St.Widget {
         this._fill.style = `background-color: ${color};`;
     }
 
+    /** The fill from the left edge, at its current width. */
     vfunc_allocate(box) {
         this.set_allocation(box);
         // The fill's width is the (possibly easing) value set in `level`.
@@ -1034,6 +1242,7 @@ export const Slider = GObject.registerClass({
         'released': {param_types: [GObject.TYPE_DOUBLE]},
     },
 }, class Slider extends St.Widget {
+    /** `scrollStep` is how far one scroll moves it; 0 leaves scrolling to the parent. */
     _init({scrollStep = 0} = {}) {
         super._init({
             style_class: 'isle-slider',
@@ -1062,6 +1271,7 @@ export const Slider = GObject.registerClass({
         });
     }
 
+    /** Where it is, 0..1. */
     get value() {
         return this._value;
     }
@@ -1081,10 +1291,12 @@ export const Slider = GObject.registerClass({
             this.queue_relayout();
     }
 
+    /** The knob shows while hovered or dragged. */
     _syncKnob() {
         this._knob.ease({opacity: this.hover || this._grab ? 255 : 0, duration: 120});
     }
 
+    /** Track, fill and knob laid out by hand, the knob centred on the value. */
     vfunc_allocate(box) {
         this.set_allocation(box);
         const [width, height] = [box.get_width(), box.get_height()];
@@ -1098,6 +1310,7 @@ export const Slider = GObject.registerClass({
         allocateAt(this._knob, Math.round(width * this._value - knob / 2), Math.round((height - knob) / 2), knob, knob);
     }
 
+    /** Sets the value under the pointer and emits `value-changed`. */
     _moveTo(event) {
         const [x] = event.get_coords();
         const [ok, localX] = this.transform_stage_point(x, 0);
@@ -1107,6 +1320,7 @@ export const Slider = GObject.registerClass({
         this.emit('value-changed', this._value);
     }
 
+    /** Grabs the pointer, so a drag carries on outside the slider. */
     vfunc_button_press_event(event) {
         // A second button pressed mid-drag keeps the one grab.
         this._grab ??= global.stage.grab(this);
@@ -1114,6 +1328,7 @@ export const Slider = GObject.registerClass({
         return Clutter.EVENT_STOP;
     }
 
+    /** Follows the pointer while dragging. */
     vfunc_motion_event(event) {
         if (!this._grab)
             return Clutter.EVENT_PROPAGATE;
@@ -1121,6 +1336,7 @@ export const Slider = GObject.registerClass({
         return Clutter.EVENT_STOP;
     }
 
+    /** Lets go and emits `released` with the final value. */
     vfunc_button_release_event(event) {
         if (!this._grab)
             return Clutter.EVENT_PROPAGATE;
@@ -1132,6 +1348,7 @@ export const Slider = GObject.registerClass({
         return Clutter.EVENT_STOP;
     }
 
+    /** Moves by `scrollStep` and emits both signals, as a scroll has no release. */
     vfunc_scroll_event(event) {
         if (!this._scrollStep)
             return Clutter.EVENT_PROPAGATE;
@@ -1156,10 +1373,12 @@ export const Slider = GObject.registerClass({
 /** Coloured dots for what is in use: green camera, orange microphone, blue screen sharing. */
 export const PrivacyDots = GObject.registerClass(
 class PrivacyDots extends St.BoxLayout {
+    /** A hidden dot per kind, always in the same order. */
     _init() {
         super._init({style_class: 'isle-privacy-dots', y_align: Clutter.ActorAlign.CENTER, visible: false});
         this._dots = {};
-        for (const kind of ['camera', 'microphone', 'screenShare']) {
+        // `phone`: the Shelf shared with a phone, a port open on the network.
+        for (const kind of ['camera', 'microphone', 'screenShare', 'phone']) {
             const dot = new St.Widget({style_class: `isle-privacy-dot ${kind}`, visible: false, y_align: Clutter.ActorAlign.CENTER});
             dot.set_pivot_point(0.5, 0.5);
             this._dots[kind] = dot;
@@ -1167,7 +1386,7 @@ class PrivacyDots extends St.BoxLayout {
         }
     }
 
-    /** Shows a dot for each of `privacy`'s camera, microphone and screenShare. */
+    /** Shows a dot for each of `privacy`'s camera, microphone, screenShare and phone. */
     update(privacy) {
         for (const [kind, dot] of Object.entries(this._dots)) {
             const on = Boolean(privacy[kind]);
@@ -1189,23 +1408,29 @@ class PrivacyDots extends St.BoxLayout {
 /** A red dot that breathes slowly while a screen recording runs. */
 export const RecordingDot = GObject.registerClass(
 class RecordingDot extends St.Widget {
+    /** Breathes again each time it is shown. */
     _init() {
         super._init({style_class: 'isle-recording-dot', y_align: Clutter.ActorAlign.CENTER});
+        this._timer = 0;
         this.connect('notify::mapped', () => this._breathe());
+        this.connect('destroy', () => this._timer && GLib.source_remove(this._timer));
     }
 
+    /** Starts the slow fade in and out; off screen it rests fully lit. */
     _breathe() {
-        this.remove_transition('opacity');
+        if (this._timer)
+            GLib.source_remove(this._timer);
+        this._timer = 0;
         this.opacity = 255;
-        if (!this.mapped)
+        if (!this.mapped || !St.Settings.get().enable_animations)
             return;
-        // Only animates while on screen; stops by itself when hidden.
-        this.ease({
-            opacity: 110,
-            duration: 900,
-            mode: Clutter.AnimationMode.EASE_IN_OUT_SINE,
-            autoReverse: true,
-            repeatCount: -1,
+        const start = GLib.get_monotonic_time();
+        this._timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, Math.round(DOT_STEP_MS), () => {
+            // Down and up again, eased in and out (as a sine).
+            const phase = ((GLib.get_monotonic_time() - start) / 1000 / DOT_FADE_MS) % 2;
+            const t = (1 - Math.cos(Math.PI * phase)) / 2;
+            this.opacity = Math.round(255 - (255 - DOT_LOW) * t);
+            return GLib.SOURCE_CONTINUE;
         });
     }
 });

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 // The shelf's light while a file is dragged in: dark until the file is over the drop zone, it rises from
 // the island's bottom edge, flares in the file's own colour as it lands, then sinks away.
@@ -24,7 +25,7 @@ const LOOK = {
     landed: {level: 1, breathe: 0, period: 1, speed: 2.6},
 };
 /** The flare stays this long before it sinks (the island's 'aura' fade-out follows). */
-const FLARE_MS = 320;
+const FLARE_MS = 450;
 /** A drop let go over the shelf waits this long for the file to show up in isled's list. */
 const LANDING_MS = 1500;
 /** Once its colour is gone, the light keeps moving this long while it fades. */
@@ -32,11 +33,13 @@ const FADE_MS = 700;
 /** New colours (a file's, once its preview is read) flow in over about three times this (s). */
 const COLOR_EASE = 0.12;
 
+/** Blends colour `a` towards `b` by `t` (0..1). */
 const mix = (a, b, t) => a.map((value, i) => value + (b[i] - value) * t);
 
 // Signals: `changed` (on or off; see `colors`), `frame` (time in s, level 0..1). While on, `colors`
 // stays the same arrays, eased in place towards new colours, so nothing jumps.
 export class DropLight extends Signals.EventEmitter {
+    /** Runs on `actor`'s frame clock, so it stops with the actor. */
     constructor(actor) {
         super();
         this._state = null;
@@ -57,6 +60,7 @@ export class DropLight extends Signals.EventEmitter {
         return this._state ? this._colors : null;
     }
 
+    /** 'over', 'full', 'landing' or 'landed'; null while off. */
     get state() {
         return this._state;
     }
@@ -96,6 +100,7 @@ export class DropLight extends Signals.EventEmitter {
         this._after('flare', FLARE_MS, () => this.off());
     }
 
+    /** Lets the light sink; it keeps moving while it fades. */
     off() {
         if (!this._state)
             return;
@@ -105,12 +110,14 @@ export class DropLight extends Signals.EventEmitter {
         this._after('stop', FADE_MS, () => this._timeline.stop());
     }
 
+    /** Stops timers and the frame clock, drops every listener. */
     destroy() {
         this._clearTimers();
         this._timeline.stop();
         this.disconnectAll();
     }
 
+    /** Lit afresh or already on, now in `state`. */
     _set(state, colors) {
         this._clearTimers();
         const wasOn = Boolean(this._state);
@@ -127,6 +134,7 @@ export class DropLight extends Signals.EventEmitter {
         }
     }
 
+    /** Per frame: the swell's spring and the colour ease. */
     _tick() {
         const now = this._timeline.get_elapsed_time() + this._timeline.get_current_repeat() * 1000;
         const dt = this._last ? Math.min((now - this._last) / 1000, 0.1) : 1 / 60;
@@ -141,6 +149,7 @@ export class DropLight extends Signals.EventEmitter {
         this.emit('frame', this._time, Math.min(1, Math.max(0, this._level.value)));
     }
 
+    /** Named one-shot timers, so a newer one replaces the old. */
     _after(name, ms, callback) {
         this._timers.get(name)?.();
         const id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
@@ -151,6 +160,7 @@ export class DropLight extends Signals.EventEmitter {
         this._timers.set(name, () => GLib.source_remove(id));
     }
 
+    /** Cancels them all. */
     _clearTimers() {
         for (const clear of this._timers.values())
             clear();

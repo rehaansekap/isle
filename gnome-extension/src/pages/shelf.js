@@ -1,23 +1,28 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
-// The Shelf page: Clipboard (copy history; Super+V to search, ← → Enter to paste)
-// and Files (dropped files to drag or copy into any app).
+// The Shelf page: Clipboard (copy history; Super+V to search, ← → Enter to paste),
+// Files (dropped files to drag or copy into any app) and, while sharing, Phone (a QR code to scan).
 
 import Clutter from 'gi://Clutter';
 import GObject from 'gi://GObject';
 import St from 'gi://St';
 
-import {onUiScale} from '../compat.js';
+import {VERTICAL, onUiScale} from '../compat.js';
+import {isShelfCopy} from '../downloads.js';
 import {DropLight} from '../dropLight.js';
 import {Thumbnails} from '../thumbnails.js';
 import {icon, iconButton, label, pillButton, setEnabled} from '../widgets.js';
 import {ClipsView} from './clips.js';
 import {FilesView, SHELF_CAPACITY} from './files.js';
 import {Page} from './page.js';
+import {PhoneCode, PhoneView} from './phone.js';
 
+// Phone has a tab only while sharing.
 const TABS = [
     {name: 'clipboard', label: 'Clipboard'},
     {name: 'files', label: 'Files'},
+    {name: 'phone', label: 'Phone'},
 ];
 const FILTERS = [
     {kind: 'text', icon: 'isle-text', name: 'Text'},
@@ -31,24 +36,31 @@ const CONFIRM_MS = 3000;
 const TAB_FADE_MS = 150;
 /** How long the hint says a file was added. */
 const ADDED_MS = 2200;
+/** How long the files hint says why sharing could not start. */
+const SHARE_ERROR_MS = 5000;
 /** The flare waits this long for a new file's colour, then lights in the shelf's own. */
 const COLOR_WAIT_MS = 400;
 /** A dragged file's colour comes from its preview, read within this long or not at all. */
 const COLOR_LATE_MS = 1500;
 
+/** The Shelf page; `_clips` and `_files` draw its two tabs. */
 export const ShelfPage = GObject.registerClass({
     Signals: {
         // The Files tab came into or out of view; see `helperArea`.
         'helper-area-changed': {},
+        // ↓ on a file the Shelf keeps itself: save it into Downloads.
+        'save-requested': {param_types: [GObject.TYPE_STRING]},
     },
 }, class ShelfPage extends Page {
+    /** `history` copies and pastes clipboard items; `settings` holds whether history is kept at all. */
     _init(daemon, history, settings, {height}) {
+        // The tab's bar and content in a column; while sharing, the phone's code beside it, the page's full height.
         super._init(daemon, {
             style_class: 'isle-page isle-shelf',
-            layout_manager: new Clutter.BoxLayout({orientation: Clutter.Orientation.VERTICAL}),
+            layout_manager: new Clutter.BoxLayout(),
             height,
         });
-        onUiScale(this, scale => (this.layout_manager.spacing = 8 * scale));
+        onUiScale(this, scale => (this.layout_manager.spacing = 16 * scale));
         this.name = 'shelf';
         this._history = history;
         this._settings = settings;
@@ -83,6 +95,7 @@ export const ShelfPage = GObject.registerClass({
         this._clips.connect('activated', (_view, item, paste) => this._onActivated(item, paste));
         this._thumbnails = new Thumbnails();
         this._files = new FilesView(daemon, this._thumbnails);
+        this._files.connect('save', (_view, uri) => this.emit('save-requested', uri));
         // The helper window must match the tab exactly, so it follows every
         // change of size or place (sync only reads them; nothing relayouts).
         this._files.connect('notify::allocation', () => {
@@ -90,11 +103,23 @@ export const ShelfPage = GObject.registerClass({
                 this.emit('helper-area-changed');
         });
 
-        this.add_child(this._buildBar());
+        this._phone = new PhoneView();
+        this._phone.connect('answer', (_view, id, allow) => this.daemon.call('share', 'Answer', id, allow));
+        this._phone.connect('remove', (_view, id) => this.daemon.call('share', 'Remove', id));
+        this._code = new PhoneCode();
+        this._code.hide();
+        /** Sharing with a phone (Share1's state is active). */
+        this._phoneSharing = false;
+
+        const column = new St.BoxLayout({...VERTICAL, style_class: 'isle-shelf-column', x_expand: true});
+        column.add_child(this._buildBar());
         const content = new St.Widget({layout_manager: new Clutter.BinLayout(), style_class: 'isle-shelf-content', x_expand: true, y_expand: true});
         content.add_child(this._clips);
         content.add_child(this._files);
-        this.add_child(content);
+        content.add_child(this._phone);
+        column.add_child(content);
+        this.add_child(column);
+        this.add_child(this._code);
 
         // Copies arrive all day; the cards are only drawn while they can be seen.
         this.watch(['clipboard'], () => this._refresh('clips'));
@@ -105,6 +130,7 @@ export const ShelfPage = GObject.registerClass({
             if (this._dropping)
                 this._syncRefusal();
         });
+        this.watch(['share'], () => this._syncShare());
         this._settingsChanged = settings.connect('changed::clipboard-history', () => this._refresh('clips'));
         this.connect('destroy', () => {
             this._destroyed = true;
@@ -114,11 +140,13 @@ export const ShelfPage = GObject.registerClass({
         });
         this._updateClips();
         this._updateFilesHint();
+        this._syncShare();
         this.showTab('clipboard');
     }
 
     // Building
 
+    /** The tabs, then the controls of the tab shown: filters, search and Clear, or the files hint. */
     _buildBar() {
         const bar = new St.BoxLayout({style_class: 'isle-shelf-bar'});
 
@@ -153,11 +181,6 @@ export const ShelfPage = GObject.registerClass({
         this._search = new St.Entry({style_class: 'isle-entry isle-shelf-field', hint_text: 'Search', can_focus: true, x_expand: true});
         this._search.set_primary_icon(new St.Icon({gicon: icon('isle-search'), icon_size: 12, style_class: 'isle-shelf-field-icon'}));
         const text = this._search.clutter_text;
-        // Ask for the keyboard before the field takes focus: the grab moves focus itself.
-        text.connect('button-press-event', () => {
-            this.emit('request-keyboard', true);
-            return Clutter.EVENT_PROPAGATE;
-        });
         text.connect('text-changed', () => {
             if (!this._clearingSearch)
                 this._clips.query = this._search.text;
@@ -188,13 +211,36 @@ export const ShelfPage = GObject.registerClass({
         this._clipboardControls.add_child(this._confirm);
         bar.add_child(this._clipboardControls);
 
-        // Files: what the tab is for.
+        // Files: what the tab is for, and sharing with a phone.
         this._filesHint = label('', 'isle-shelf-hint', {
             x_expand: true,
             x_align: Clutter.ActorAlign.END,
             y_align: Clutter.ActorAlign.CENTER,
         });
         bar.add_child(this._filesHint);
+        const phone = new St.BoxLayout({style_class: 'isle-shelf-phone-box'});
+        phone.add_child(new St.Icon({gicon: icon('isle-smartphone-symbolic'), icon_size: 13, y_align: Clutter.ActorAlign.CENTER}));
+        phone.add_child(label('Phone', 'isle-shelf-phone-label'));
+        this._phoneStart = new St.Button({
+            style_class: 'isle-pill isle-pill-small isle-shelf-phone',
+            child: phone,
+            can_focus: true,
+            accessible_name: 'Share the Shelf with your phone',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._phoneStart.connect('clicked', () => this._startSharing());
+        bar.add_child(this._phoneStart);
+
+        // Phone: Stop, at the end.
+        this._phoneControls = new St.BoxLayout({style_class: 'isle-shelf-controls', x_expand: true, x_align: Clutter.ActorAlign.END});
+        this._phoneControls.add_child(pillButton('Stop', 'isle-pill-small', () => this.daemon.call('share', 'Stop')));
+        bar.add_child(this._phoneControls);
+        // Each at its own height, centred on the row: none stretches to the tallest (the search field opened with
+        // Super+V made the tabs and filters taller with it, and the cards shorter).
+        for (const box of [bar, this._clipboardControls]) {
+            for (const child of box.get_children())
+                child.y_align = Clutter.ActorAlign.CENTER;
+        }
         return bar;
     }
 
@@ -209,6 +255,7 @@ export const ShelfPage = GObject.registerClass({
         this._search.grab_key_focus();
     }
 
+    /** Puts the search button back in place of the field. */
     _closeSearch() {
         this._search.hide();
         this._searchSpacer.show();
@@ -219,6 +266,8 @@ export const ShelfPage = GObject.registerClass({
 
     /** Switches to tab `name`; with `focusSearch`, the search field takes the keyboard. */
     showTab(name, {focusSearch = false} = {}) {
+        if (name === 'phone' && !this._phoneSharing)
+            name = 'files';
         const changed = name !== this._tab;
         this._tab = name;
         for (const [tab, button] of this._tabButtons) {
@@ -227,9 +276,12 @@ export const ShelfPage = GObject.registerClass({
             else
                 button.remove_style_pseudo_class('checked');
         }
-        const shown = name === 'clipboard' ? this._clips : this._files;
-        const hidden = shown === this._clips ? this._files : this._clips;
-        hidden.hide();
+        const views = {clipboard: this._clips, files: this._files, phone: this._phone};
+        const shown = views[name];
+        for (const view of Object.values(views)) {
+            if (view !== shown)
+                view.hide();
+        }
         if (changed && this.mapped) {
             shown.opacity = 0;
             shown.show();
@@ -244,8 +296,7 @@ export const ShelfPage = GObject.registerClass({
             shown.opacity = 255;
             shown.show();
         }
-        this._clipboardControls.visible = name === 'clipboard';
-        this._filesHint.visible = name === 'files';
+        this._syncControls();
         if (name !== 'files') {
             this._light.off();
             this._setAdded(false);
@@ -262,11 +313,99 @@ export const ShelfPage = GObject.registerClass({
             this.emit('helper-area-changed');
     }
 
+    /** Each tab's controls in the bar, and the phone's code beside the Phone tab. */
+    _syncControls() {
+        const name = this._tab;
+        this._clipboardControls.visible = name === 'clipboard';
+        this._filesHint.visible = name === 'files';
+        this._phoneStart.visible = name === 'files' && !this._phoneSharing;
+        this._phoneControls.visible = name === 'phone';
+        this._code.visible = name === 'phone';
+    }
+
+    // Phone
+
+    /** Starts sharing with a phone; the Phone tab opens once isled says it shares. */
+    async _startSharing() {
+        this._startingShare = true;
+        setEnabled(this._phoneStart, false);
+        const {result, error, unknownMethod} = await this.daemon.attempt('share', 'Start');
+        if (this._destroyed)
+            return;
+        setEnabled(this._phoneStart, true);
+        if (error || result === null) {
+            this._startingShare = false;
+            // An isled from before sharing: updated, not yet restarted.
+            this._shareError = error ?? (unknownMethod ? 'Log out and back in to share with a phone'
+                : 'Couldn’t start sharing · is Isle’s service running?');
+            this._updateFilesHint();
+            this.later('share-error', SHARE_ERROR_MS, () => {
+                this._shareError = null;
+                this._updateFilesHint();
+            });
+            return;
+        }
+        // Its state may have come before the answer.
+        if (this._phoneSharing)
+            this._openPhoneTab();
+    }
+
+    /** The Phone tab, once, after Phone was pressed. */
+    _openPhoneTab() {
+        if (!this._startingShare)
+            return;
+        this._startingShare = false;
+        this.showTab('phone');
+    }
+
+    /** Follows isled's sharing: the Phone tab comes and goes with it. */
+    _syncShare() {
+        const state = this.daemon.state.share;
+        const sharing = Boolean(state?.active);
+        const changed = sharing !== this._phoneSharing;
+        this._phoneSharing = sharing;
+        this._tabButtons.get('phone').visible = sharing;
+        // Off: every row goes at once (a new start shows the steps, never last session's rows).
+        if (sharing)
+            this._phone.update(state);
+        else
+            this._phone.reset();
+        if (!sharing) {
+            this._codeSession = null;
+            this._code.rows = [];
+            this._phone.url = null;
+        } else if (state.session !== this._codeSession) {
+            this._codeSession = state.session;
+            this._fetchCode(state.session);
+        }
+        if (sharing && this._startingShare)
+            this._openPhoneTab();
+        else if (!sharing && this._tab === 'phone')
+            this.showTab('files');
+        else if (changed)
+            this._syncControls();
+    }
+
+    /** The session's QR code: isled gives it to GNOME Shell alone, not in its state. */
+    async _fetchCode(session) {
+        const result = await this.daemon.call('share', 'Code');
+        if (this._destroyed || session !== this._codeSession || !result)
+            return;
+        try {
+            const {qr, url} = JSON.parse(result[0]);
+            this._code.rows = qr ?? [];
+            this._phone.url = url ?? null;
+        } catch (e) {
+            console.warn(`Isle: invalid sharing code from isled: ${e.message}`);
+        }
+    }
+
     /** The Files tab while it is on screen, for the drag-and-drop helper to cover. */
     get helperArea() {
         return this._tab === 'files' ? this._files : null;
     }
 
+    /** Set while the drag-and-drop helper's window covers the Files tab, which then draws only the names. */
     set helperActive(active) {
         this._files.helperActive = active;
     }
@@ -276,10 +415,12 @@ export const ShelfPage = GObject.registerClass({
         this._files.helperAvailable = available;
     }
 
+    /** The shelf light's colours, which wash the island too. */
     get tint() {
         return this._light.colors;
     }
 
+    /** A light that moves, rather than a flat wash. */
     get tintStyle() {
         return 'aura';
     }
@@ -315,10 +456,9 @@ export const ShelfPage = GObject.registerClass({
             if (!['landing', 'landed'].includes(this._light.state))
                 this._light.off();
         }
-        this._files.refused = dropping && Boolean(this._refusal);
+        this._files.refusal = dropping ? this._refusal : null;
         this._updateFilesHint();
     }
-
 
     /** The file is right over the drop zone. */
     set dropOver(over) {
@@ -351,8 +491,10 @@ export const ShelfPage = GObject.registerClass({
     /** The drag ended; `onShelf` if it was let go over the drop zone. Returns whether the shelf turned it away. */
     endDrop(onShelf) {
         const refused = onShelf && Boolean(this._refusal);
-        if (onShelf && !refused)
+        if (onShelf && !refused) {
             this._light.release();
+            this._files.flashLanded();
+        }
         this.dropping = false;
         return refused;
     }
@@ -360,7 +502,7 @@ export const ShelfPage = GObject.registerClass({
     // Why the files on their way can't all land, as the helper refuses them: 'local' (none is on this
     // computer) or 'room' (more than fit; files already on the shelf only move up); else null.
     get _refusal() {
-        const shelf = this.daemon.state.shelf ?? [];
+        const shelf = this._files.items;
         const local = this._hovered?.filter(uri => uri.startsWith('file://'));
         if (local?.length === 0)
             return 'local';
@@ -372,19 +514,21 @@ export const ShelfPage = GObject.registerClass({
     /** The light, zone and hint say whether the files on their way can land. */
     _syncRefusal() {
         const refusal = this._refusal;
-        this._files.refused = Boolean(refusal);
+        this._files.refusal = refusal;
         this._updateFilesHint();
         this._light.approach(this._dropOver, Boolean(refusal));
     }
 
     /** Says what the Files tab is for, and when it is full. */
     _updateFilesHint() {
-        const count = (this.daemon.state.shelf ?? []).length;
+        const count = this._files.items.length;
         const full = count >= SHELF_CAPACITY;
         const refusal = this._dropping ? this._refusal : null;
         let text;
+        if (this._shareError && !this._dropping)
+            text = this._shareError;
         // An empty shelf's drop zone says it all itself.
-        if (count === 0 && !this._added)
+        else if (count === 0 && !this._added)
             text = '';
         else if (refusal === 'local')
             text = 'Only files on this computer';
@@ -399,7 +543,9 @@ export const ShelfPage = GObject.registerClass({
         else if (full)
             text = 'Full · remove a file to add another';
         else
-            text = `${count} of ${SHELF_CAPACITY} · click to copy, or drag into any app`;
+            text = this._files.items.some(item => isShelfCopy(item.uri))
+                ? `${count} of ${SHELF_CAPACITY} · click to copy, ↓ to save, or drag out`
+                : `${count} of ${SHELF_CAPACITY} · click to copy, or drag into any app`;
         this._filesHint.text = text;
         if (this._dropping || this._added)
             this._filesHint.add_style_class_name('active');
@@ -434,6 +580,7 @@ export const ShelfPage = GObject.registerClass({
         this.later('added', ADDED_MS, () => this._setAdded(false));
     }
 
+    /** Lights the hint for a moment after a file lands. */
     _setAdded(added) {
         this._added = added;
         this._updateFilesHint();
@@ -448,6 +595,7 @@ export const ShelfPage = GObject.registerClass({
         this.markCold();
     }
 
+    /** Redraws the cards: none while history is off or the screen is shared. */
     _updateClips() {
         const off = !this._settings.get_boolean('clipboard-history');
         this._clips.update({off, hidden: Boolean(this._sharing)});
@@ -457,6 +605,7 @@ export const ShelfPage = GObject.registerClass({
 
     // Clipboard
 
+    /** Shows only one kind of item, or every kind for null; the chosen button stays lit. */
     _setFilter(kind) {
         this._filter = kind;
         for (const [filterKind, button] of this._filterButtons) {
@@ -470,6 +619,7 @@ export const ShelfPage = GObject.registerClass({
         this._clips.kind = kind;
     }
 
+    /** ← → move between cards; Esc empties the search before it can close the island. */
     _onSearchKey(event) {
         switch (event.get_key_symbol()) {
         case Clutter.KEY_Left:
@@ -489,6 +639,7 @@ export const ShelfPage = GObject.registerClass({
         }
     }
 
+    /** Copies the item back to the clipboard, and with `paste` types it into the window behind. */
     async _onActivated(item, paste) {
         // The extension may have stopped while the item was fetched.
         if (!await this._history.copy(item, {touch: paste}) || this._destroyed)
@@ -502,18 +653,21 @@ export const ShelfPage = GObject.registerClass({
         }
     }
 
+    /** Swaps the trash button for "Clear all" for a few seconds, so one click never wipes it. */
     _askToClear() {
         this._clear.hide();
         this._confirm.show();
         this.later('confirm', CONFIRM_MS, () => this._endConfirm());
     }
 
+    /** Back to the trash button. */
     _endConfirm() {
         this.cancel('confirm');
         this._confirm.hide();
         this._clear.show();
     }
 
+    /** Clears all but the pinned items. */
     _clearHistory() {
         this._endConfirm();
         this.daemon.call('clipboard', 'Clear');
@@ -533,16 +687,24 @@ export const ShelfPage = GObject.registerClass({
         return clips;
     }
 
+    /** New cards are built ahead while another page is open too. */
+    get warmsOpen() {
+        return true;
+    }
+
+    /** Redraws ahead what changed while closed. */
     warmUp() {
         this._flushStale();
     }
 
+    /** Without anything stale, only the "5m ago" ages move on. */
     onActivate() {
         if (!this._flushStale())
             this._clips.refreshAges();
         this.daemon.call('shelf', 'Refresh');
     }
 
+    /** Items copied while open move to the front now, and the search empties for next time. */
     onDeactivate() {
         this._light.off();
         this._added = false;

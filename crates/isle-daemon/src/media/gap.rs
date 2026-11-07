@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! Browsers report nothing for a moment between videos; a short gap after a playing
 //! song is shown as still playing, so the island stays steady. Real pauses show at once.
@@ -22,6 +23,7 @@ pub struct GapBridge<P> {
 }
 
 impl<P> Default for GapBridge<P> {
+    /// Written out, since a derive would require `P: Default`.
     fn default() -> Self {
         Self {
             playing: None,
@@ -69,6 +71,7 @@ impl<P: Clone> GapBridge<P> {
     }
 }
 
+/// Whether a song is really playing, with a title to show.
 fn is_playing(now_playing: &NowPlaying) -> bool {
     now_playing.available && now_playing.status == "Playing" && !now_playing.title.is_empty()
 }

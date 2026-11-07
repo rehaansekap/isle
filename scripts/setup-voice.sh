@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Sets up speech recognition for Isle's voice assistant: downloads the speech model isle-whisper runs
-# (whisper.cpp, on the GPU through Vulkan or on the processor), checking its SHA-256. No Python.
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 zickrian
+# Sets up speech recognition for Isle's voice assistant: downloads the whisper.cpp model, checking its SHA-256.
 # Usage: isle-setup-voice [tiny|base|small|medium] [--remove-old]
 #   The model given (then also chosen in Settings → Assistant), else the one chosen there, else small.
 #   --remove-old  also deletes what the older Python setup left: its venv and faster-whisper models.
-# Installed as `isle-setup-voice`; also runs from the source folder as scripts/setup-voice.sh.
 set -euo pipefail
 
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}/isle"
@@ -17,7 +17,9 @@ OLD_VENV="$DATA/voice-venv"
 OLD_HELPER="$DATA/isle-whisper.py"
 HUB="${HF_HUB_CACHE:-${HF_HOME:-${XDG_CACHE_HOME:-$HOME/.cache}/huggingface}/hub}"
 
+# A step's heading, in bold.
 step() { printf '\033[1m==> %s\033[0m\n' "$*"; }
+# Says what went wrong and stops.
 fail() { printf 'isle-setup-voice: %s\n' "$*" >&2; exit 1; }
 
 MODEL=""
@@ -27,7 +29,7 @@ for arg in "$@"; do
     case "$arg" in
         tiny | base | small | medium) MODEL="$arg" GIVEN=1 ;;
         --remove-old) REMOVE_OLD=1 ;;
-        -h | --help) sed -n '2,7s/^# \{0,1\}//p' "$0"; exit 0 ;;
+        -h | --help) sed -n '4,7s/^# \{0,1\}//p' "$0"; exit 0 ;;
         *) fail "unknown argument '$arg' (a model is tiny, base, small or medium)" ;;
     esac
 done
@@ -54,6 +56,7 @@ VAD_SHA=29940d98d42b91fbd05ce489f3ecf7c72f0a42f027e4875919a28fb4c04ea2cf
 command -v curl >/dev/null || fail "please install curl first."
 command -v sha256sum >/dev/null || fail "please install sha256sum (coreutils) first."
 
+# Whether file $1 is there with SHA-256 $2.
 verified() { [ -f "$1" ] && [ "$(sha256sum "$1" | cut -d' ' -f1)" = "$2" ]; }
 
 # Downloads $1 to $MODELS/$2 unless it is there already, and checks it is the file published.

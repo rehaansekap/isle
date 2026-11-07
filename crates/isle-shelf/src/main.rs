@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! `isle-shelf`: the shelf's drag-and-drop window, as Shell widgets can't DnD with apps.
 //! An X11 override-redirect window: the only kind GNOME Shell stacks above the island.
@@ -17,6 +18,7 @@ use crate::shelf::ShelfWindow;
 
 const APP_ID: &str = "io.github.zickrian.isle.ShelfWindow";
 
+/// Starts the GTK app on X11 and the CPU renderer, then waits for D-Bus calls.
 fn main() -> glib::ExitCode {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     // SAFETY: called before GTK starts and before any other thread exists.
@@ -59,6 +61,7 @@ fn main() -> glib::ExitCode {
     app.run()
 }
 
+/// Exports the shelf window's D-Bus interface, then takes the bus name; quits if it is taken.
 fn start_service(app: &gtk::Application) -> Result<(), glib::Error> {
     let connection = gio::bus_get_sync(gio::BusType::Session, None::<&gio::Cancellable>)?;
     service::register(&connection, ShelfWindow::new(app))?;
@@ -77,12 +80,18 @@ fn start_service(app: &gtk::Application) -> Result<(), glib::Error> {
     Ok(())
 }
 
+/// Applies the shelf's stylesheet to the whole display, above the user's own `gtk.css`.
+///
+/// The window must look like the island beneath it whatever the GTK theme: a theme installed in
+/// `~/.config/gtk-4.0/gtk.css` loads at USER priority, above APPLICATION, and its rules (a coloured
+/// frame on any drop target, its own button size and corners) drew over the island. This provider
+/// only reaches this process's one window.
 fn load_css() {
     let provider = gtk::CssProvider::new();
     provider.load_from_string(include_str!("style.css"));
     gtk::style_context_add_provider_for_display(
         &gdk::Display::default().expect("GTK has no default display"),
         &provider,
-        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        gtk::STYLE_PROVIDER_PRIORITY_USER + 1,
     );
 }

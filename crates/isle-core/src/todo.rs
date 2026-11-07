@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! A plain to-do list: write it down, tick it off. Finished tasks are cleared
 //! the next day.
@@ -16,6 +17,7 @@ pub struct TodoItem {
     pub done_at_ms: Option<i64>,
 }
 
+/// The tasks in the order they were added, with ids that never repeat.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TodoList {
     items: Vec<TodoItem>,
@@ -23,6 +25,7 @@ pub struct TodoList {
 }
 
 impl TodoList {
+    /// The tasks, oldest first.
     pub fn items(&self) -> &[TodoItem] {
         &self.items
     }
@@ -43,6 +46,7 @@ impl TodoList {
         Some(self.next_id)
     }
 
+    /// Ticks a task off (noting when) or back on; returns whether it was found.
     pub fn set_done(&mut self, id: u64, done: bool, now: i64) -> bool {
         self.find(id)
             .map(|item| {
@@ -52,6 +56,7 @@ impl TodoList {
             .is_some()
     }
 
+    /// Gives a task a new, trimmed title; false when blank or not found.
     pub fn rename(&mut self, id: u64, title: &str) -> bool {
         let title = title.trim();
         if title.is_empty() {
@@ -71,16 +76,19 @@ impl TodoList {
         self.items.len() != before
     }
 
+    /// Deletes a task; returns whether it was there.
     pub fn remove(&mut self, id: u64) -> bool {
         let before = self.items.len();
         self.items.retain(|item| item.id != id);
         self.items.len() != before
     }
 
+    /// Deletes every finished task.
     pub fn clear_done(&mut self) {
         self.items.retain(|item| !item.done);
     }
 
+    /// The task with this id, to change in place.
     fn find(&mut self, id: u64) -> Option<&mut TodoItem> {
         self.items.iter_mut().find(|item| item.id == id)
     }

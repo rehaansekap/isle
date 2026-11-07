@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 //! Small JSON files under the user's data directory, one per feature.
 
@@ -16,6 +17,7 @@ use serde::de::DeserializeOwned;
 /// Every store's writer, for [`flush`] on the way out.
 static WRITERS: Mutex<Vec<Weak<Writer>>> = Mutex::new(Vec::new());
 
+/// One feature's JSON file, loaded once and saved in the background.
 pub struct Store<T> {
     path: PathBuf,
     writer: Arc<Writer>,
@@ -34,6 +36,7 @@ impl<T: Serialize + DeserializeOwned + Default> Store<T> {
         Self::at(data_dir().join(format!("{name}.json")))
     }
 
+    /// A store at any path; tests point it at a temporary folder.
     pub(crate) fn at(path: PathBuf) -> Self {
         let writer = Arc::new(Writer {
             path: path.clone(),
@@ -160,6 +163,7 @@ struct Writer {
 }
 
 impl Writer {
+    /// Writes the newest pending value, if any; a failure is logged and the value dropped.
     fn write(&self) {
         let _writing = lock(&self.writing);
         let Some(bytes) = lock(&self.pending).take() else {
@@ -179,6 +183,7 @@ pub fn flush() {
     }
 }
 
+/// Locks even a poisoned mutex: a panic elsewhere shouldn't stop saving.
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -199,6 +204,7 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
     private_file(path)?.write_all(bytes)
 }
 
+/// Opens for writing with mode 0600, truncating.
 fn private_file(path: &Path) -> io::Result<fs::File> {
     fs::OpenOptions::new()
         .write(true)
@@ -208,6 +214,7 @@ fn private_file(path: &Path) -> io::Result<fs::File> {
         .open(path)
 }
 
+/// Temp file, fsync, rename: a crash leaves the old file or the new one, never half of one.
 fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         create_private_dir(parent)?;
@@ -224,12 +231,14 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
+/// Isle's data folder, `~/.local/share/isle` by default.
 pub fn data_dir() -> PathBuf {
     dirs::data_dir()
         .unwrap_or_else(std::env::temp_dir)
         .join("isle")
 }
 
+/// Isle's cache folder (`~/.cache/isle`), for what can be fetched again.
 pub fn cache_dir() -> PathBuf {
     dirs::cache_dir()
         .unwrap_or_else(std::env::temp_dir)

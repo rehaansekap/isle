@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 // GNOME's notifications via the island, which replaces the clock where GNOME shows them. Hides GNOME's
 // banners and emits `banner` by GNOME's rules; Do Not Disturb is GNOME's own "show banners" setting.
@@ -9,9 +10,12 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as MessageTray from 'resource:///org/gnome/shell/ui/messageTray.js';
 import * as Signals from 'resource:///org/gnome/shell/misc/signals.js';
 
-/** Signals: `changed` (): the list changed (and so maybe the unseen set); `seen-changed` (): only which are
- * seen changed; `updated` (): one changed in place; `banner` (notification): to show, then acknowledge once
- * shown; `dnd-changed` (). */
+/** GNOME's calendar reminders, whose window Isle's own event alerts stand in for: Evolution's, and since
+ * GNOME 51 the shell's calendar server's own, with the same ids. */
+const CALENDAR_REMINDERS = ['org.gnome.Evolution-alarm-notify', 'org.gnome.Shell.CalendarServer'];
+
+/** Signals: `changed` (the list), `seen-changed` (only what is seen), `updated` (one changed in place),
+ * `banner` (notification: show it, then acknowledge it) and `dnd-changed`. */
 export class NotificationCenter extends Signals.EventEmitter {
     /** `isleSettings` says whether GNOME keeps its own banners (`gnome-banners`). */
     constructor(isleSettings) {
@@ -23,8 +27,14 @@ export class NotificationCenter extends Signals.EventEmitter {
         this._settingsChanged = this._settings.connect('changed::show-banners', () => this.emit('dnd-changed'));
 
         this._isleSettings = isleSettings;
+        /** Whether Isle's own event alert stands in for the calendar reminder with this id, as (id) => boolean. */
+        this.remindsOf = null;
         this._bannersChanged = isleSettings.connect('changed::gnome-banners', () => this._syncBanners());
         this._syncBanners();
+        this._eventAlertsChanged = isleSettings.connect('changed::event-alerts', () => {
+            for (const source of this._sources.keys())
+                this._dropReminders(source);
+        });
 
         for (const source of this._tray.getSources())
             this._watch(source);
@@ -38,6 +48,7 @@ export class NotificationCenter extends Signals.EventEmitter {
         return all.sort((a, b) => b.datetime.compare(a.datetime));
     }
 
+    /** How many are not seen yet. */
     get unseenCount() {
         let count = 0;
         for (const source of this._sources.keys())
@@ -45,14 +56,17 @@ export class NotificationCenter extends Signals.EventEmitter {
         return count;
     }
 
+    /** Whether the unread dot shows. */
     get hasUnseen() {
         return [...this._sources.keys()].some(source => source.notifications.some(n => !n.acknowledged));
     }
 
+    /** Do Not Disturb: GNOME's "show banners" turned off. */
     get dnd() {
         return !this._settings.get_boolean('show-banners');
     }
 
+    /** Writes GNOME's own setting, so the top bar's switch agrees. */
     set dnd(on) {
         this._settings.set_boolean('show-banners', !on);
     }
@@ -66,9 +80,9 @@ export class NotificationCenter extends Signals.EventEmitter {
             this.emit('seen-changed');
     }
 
+    /** Dismisses every notification, a resident one (an app's "recording saved") too, as GNOME's Clear does. */
     clearAll() {
-        // Resident notifications (e.g. a running download) cannot be dismissed.
-        for (const notification of this.notifications.filter(n => !n.resident))
+        for (const notification of this.notifications)
             notification.destroy(MessageTray.NotificationDestroyedReason.DISMISSED);
     }
 
@@ -77,6 +91,7 @@ export class NotificationCenter extends Signals.EventEmitter {
         return this._isleSettings.get_boolean('gnome-banners');
     }
 
+    /** Blocks or unblocks GNOME's banners to match the setting. */
     _syncBanners() {
         if (this._gnomeBanners && this._blocking)
             this._unblockBanners();
@@ -105,6 +120,7 @@ export class NotificationCenter extends Signals.EventEmitter {
         tray._updateState();
     }
 
+    // Drops the override and hands the tray back the block others asked for.
     _unblockBanners() {
         this._blocking = false;
         delete this._tray.bannerBlocked;
@@ -112,21 +128,51 @@ export class NotificationCenter extends Signals.EventEmitter {
         this._tray.bannerBlocked = this._requestedBlock;
     }
 
+    /** Follows a source's notifications coming, going and asking for banners. */
     _watch(source) {
         if (this._sources.has(source))
             return;
         const ids = [
             source.connect('notification-added', (_source, notification) => {
+                if (this._standsInFor(source, notification)) {
+                    // Once GNOME queued its banner, which this takes back too.
+                    Promise.resolve().then(() => notification.destroy(MessageTray.NotificationDestroyedReason.EXPIRED));
+                    return;
+                }
                 this._added = notification;
                 this.emit('changed');
             }),
             source.connect('notification-removed', () => this.emit('changed')),
-            source.connect('notification-request-banner', (_source, notification) => this._onBannerRequest(notification)),
+            source.connect('notification-request-banner', (_source, notification) => {
+                if (!this._standsInFor(source, notification))
+                    this._onBannerRequest(notification);
+            }),
         ];
         this._sources.set(source, ids);
+        this._dropReminders(source);
         this.emit('changed');
     }
 
+    /** Whether `notification` is a calendar reminder Isle's own event alert stands in for: clicked, they
+     * opened a window of their own, and came on top of Isle's, which has the meeting's Join. Under Do Not
+     * Disturb Isle alerts of nothing, so the reminder stays; see `CalendarPage.remindsOf` for which others. */
+    _standsInFor(source, notification) {
+        const app = source.policy?.id ?? source.app?.get_id?.()?.replace(/\.desktop$/, '');
+        if (!CALENDAR_REMINDERS.includes(app) || !this._isleSettings.get_boolean('event-alerts') || this.dnd)
+            return false;
+        // Their id: the calendar, the event, its recurrence (if any) and the alarm's time, a line each.
+        return Boolean(this.remindsOf?.(String(notification.id ?? '')));
+    }
+
+    /** Takes away the calendar reminders already there that Isle's event alerts stand in for. */
+    _dropReminders(source) {
+        for (const notification of [...source.notifications]) {
+            if (this._standsInFor(source, notification))
+                notification.destroy(MessageTray.NotificationDestroyedReason.EXPIRED);
+        }
+    }
+
+    /** Stops following a source that went away. */
     _unwatch(source) {
         const ids = this._sources.get(source);
         if (!ids)
@@ -149,6 +195,7 @@ export class NotificationCenter extends Signals.EventEmitter {
         }
     }
 
+    /** Whether it is still in the list, not dismissed meanwhile. */
     _listed(notification) {
         const source = notification.source;
         return this._sources.has(source) && source.notifications.includes(notification);
@@ -168,15 +215,15 @@ export class NotificationCenter extends Signals.EventEmitter {
         });
     }
 
-    /** Marks `notification` seen, with its sound, once it was actually shown (see `banner`), as GNOME does. */
+    /** Marks `notification` seen once it was shown with someone there to see it (see `banner`), as GNOME does. */
     acknowledge(notification) {
         if (notification.acknowledged)
             return;
-        notification.playSound();
         notification.acknowledged = true;
         this.emit('seen-changed');
     }
 
+    /** Disconnects everything and gives GNOME its banners back. */
     destroy() {
         // Tell no one about changes made while tearing down.
         this.disconnectAll();
@@ -186,6 +233,7 @@ export class NotificationCenter extends Signals.EventEmitter {
             this._unwatch(source);
         this._settings.disconnect(this._settingsChanged);
         this._isleSettings.disconnect(this._bannersChanged);
+        this._isleSettings.disconnect(this._eventAlertsChanged);
         if (this._blocking)
             this._unblockBanners();
     }

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 zickrian
 
 // Synced lyrics: the sung line large and bright, the rest dimmer,
 // pauses as breathing dots. Click a line to jump there.
@@ -23,6 +24,8 @@ const SUNG_OPACITY = 75;
 const RESTING_SCALE = 0.93;
 const LINE_EASE_MS = 380;
 const SCROLL_EASE_MS = 520;
+/** Lines are grouped this many to a block; only the blocks in view are drawn (see `_syncBlocks`). */
+const BLOCK_LINES = 8;
 /** A song whose first line comes this late opens with the pause dots. */
 const INTRO_MS = 3000;
 
@@ -39,6 +42,7 @@ const STATES = {
 /** Three dots that breathe while the singing pauses. */
 const PauseDots = GObject.registerClass(
 class PauseDots extends St.BoxLayout {
+    /** Three still dots; they breathe once `breathing` is set and they are on screen. */
     _init(styleClass = 'isle-lyric-dots') {
         super._init({style_class: styleClass});
         this._dots = [0, 1, 2].map(() => {
@@ -52,6 +56,7 @@ class PauseDots extends St.BoxLayout {
         this.connect('notify::mapped', () => this._sync());
     }
 
+    /** True while this pause is the one sung and the music plays. */
     set breathing(breathing) {
         if (breathing === this._breathing)
             return;
@@ -59,6 +64,7 @@ class PauseDots extends St.BoxLayout {
         this._sync();
     }
 
+    /** Starts or stops the loop; never runs hidden or with animations off. */
     _sync() {
         const on = this._breathing && this.mapped && St.Settings.get().enable_animations;
         this._dots.forEach((dot, i) => {
@@ -81,8 +87,10 @@ class PauseDots extends St.BoxLayout {
     }
 });
 
+/** The lyrics page's view: the lines, or a state message when there are none. */
 export const LyricsPane = GObject.registerClass(
 class LyricsPane extends St.Widget {
+    /** Scroll view for the lines with a centred state message over it. */
     _init(page) {
         super._init({
             style_class: 'isle-lyrics',
@@ -94,6 +102,7 @@ class LyricsPane extends St.Widget {
         this._key = null;
         this._lines = [];
         this._rows = [];
+        this._blocks = [];
         /** Each row's last opacity and scale eased to: Clutter would ease again to the same. */
         this._opacities = [];
         this._scales = [];
@@ -117,11 +126,15 @@ class LyricsPane extends St.Widget {
             y_expand: true,
         });
         this._scroll.set_child(this._column);
+        const adjustment = this._scroll.vadjustment;
         // The lines laid out anew (say, a new width): back to the one sung.
-        this._scroll.vadjustment.connect('notify::upper', () => {
+        adjustment.connect('notify::upper', () => {
             if (this._synced && Date.now() > this._manualUntil)
                 this._page.later('lyric-relayout', 0, () => this._scrollTo(this._current));
         });
+        // Scrolled: the blocks in view are drawn (laid out anew, see `vfunc_allocate`).
+        adjustment.connect('notify::value', () => this._syncBlocks());
+        adjustment.connect('notify::page-size', () => this._syncBlocks());
         // Scrolling by hand holds the lines still for a while.
         this._scroll.connect('scroll-event', () => {
             this._manualUntil = Date.now() + MANUAL_SCROLL_HOLD_MS;
@@ -146,6 +159,12 @@ class LyricsPane extends St.Widget {
         this.add_child(this._state);
     }
 
+    vfunc_allocate(box) {
+        super.vfunc_allocate(box);
+        this._syncBlocks();
+    }
+
+    /** Catches up with isled's lyrics: rebuilt only for a new track or status. */
     update() {
         const {lyrics} = this._page.daemon.state;
         const status = lyrics?.status ?? 'none';
@@ -163,6 +182,7 @@ class LyricsPane extends St.Widget {
         this.syncPlaying();
     }
 
+    /** Shows one of STATES, or hides the message for null. */
     _showState(state) {
         this._state.visible = Boolean(state);
         this._stateDots.breathing = Boolean(state?.dots);
@@ -177,8 +197,11 @@ class LyricsPane extends St.Widget {
         this._stateHint.visible = Boolean(state.hint);
     }
 
+    /** Makes a row per line, all resting until `follow` picks the sung one. */
     _rebuild(lyrics) {
         this._column.destroy_all_children();
+        // Dropped before the scroll resets: its notify syncs the blocks, which are gone now.
+        this._blocks = [];
         this._synced = lyrics?.status === 'synced';
         this._lines = [...lyrics?.lines ?? []];
         // A long intro opens with the pause dots.
@@ -189,8 +212,12 @@ class LyricsPane extends St.Widget {
         this._rows = this._lines.map(line => this._row(line));
         this._opacities = this._rows.map(() => COMING_OPACITY.at(-1));
         this._scales = this._rows.map(() => RESTING_SCALE);
-        for (const row of this._rows)
-            this._column.add_child(row);
+        for (let i = 0; i < this._rows.length; i += BLOCK_LINES) {
+            const block = new St.BoxLayout({...VERTICAL, style_class: 'isle-lyrics-block'});
+            this._rows.slice(i, i + BLOCK_LINES).forEach(row => block.add_child(row));
+            this._column.add_child(block);
+            this._blocks.push(block);
+        }
         // Room after the last line, so it too can reach the reading line.
         // (Padding would not do: St takes it off the scrolled view.)
         if (this._rows.length)
@@ -200,6 +227,7 @@ class LyricsPane extends St.Widget {
             this._page.markCold({force: true});
     }
 
+    /** A line's words, or pause dots for an empty synced line; synced rows seek on click. */
     _row(line) {
         const words = line.text.trim();
         let row;
@@ -287,6 +315,18 @@ class LyricsPane extends St.Widget {
         });
     }
 
+    /** Hides the blocks out of view: the edge fade draws the lines off screen first, where none is
+     * skipped for being out of sight, but a block at opacity 0 is not drawn. */
+    _syncBlocks() {
+        const {value, page_size: pageSize} = this._scroll.vadjustment;
+        for (const block of this._blocks) {
+            // Not laid out yet, it is synced again once it is, before it is drawn.
+            const {y1, y2} = block.get_allocation_box();
+            block.opacity = y2 > value && y1 < value + pageSize ? 255 : 0;
+        }
+    }
+
+    /** Glides the view so line `index` sits at ANCHOR. */
     _scrollTo(index) {
         const target = this._rows[Math.max(index, 0)];
         if (!target || !this.mapped)
@@ -297,7 +337,8 @@ class LyricsPane extends St.Widget {
             return;
         }
         const adjustment = this._scroll.vadjustment;
-        const middle = target.get_allocation_box().y1 + target.height / 2;
+        // A row's place is within its block.
+        const middle = target.get_parent().get_allocation_box().y1 + target.get_allocation_box().y1 + target.height / 2;
         const value = Math.max(adjustment.lower,
             Math.min(adjustment.upper - adjustment.page_size, middle - adjustment.page_size * ANCHOR));
         adjustment.remove_transition('value');
