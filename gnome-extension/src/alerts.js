@@ -7,7 +7,7 @@ import GLib from 'gi://GLib';
 
 import * as Format from './format.js';
 import * as Playback from './playback.js';
-import {notificationIcon, plainBody} from './notifications.js';
+import {activateNotification, notificationIcon, plainBody} from './notifications.js';
 import * as Theme from './theme.js';
 import {LOW_BATTERY, deviceIcon} from './widgets.js';
 
@@ -337,13 +337,8 @@ export function notification(item, urgent, {onShown, onSeen, onWithdrawn}, share
         duration: urgent ? CRITICAL_DURATION : item.isTransient ? TRANSIENT_NOTIFICATION_DURATION : NOTIFICATION_DURATION,
         page: 'notifications',
         onActivate: () => {
-            if (!withdrawn.has(item)) {
-                item.activate();
-                if (item.source?.app?.activate)
-                    item.source.app.activate();
-                else if (item.source?.open)
-                    item.source.open();
-            }
+            if (!withdrawn.has(item))
+                activateNotification(item);
         },
         item,
         // When its turn comes: gone if withdrawn or read meanwhile, else as it reads now (an app may have

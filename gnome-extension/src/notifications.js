@@ -5,6 +5,7 @@
 // banners and emits `banner` by GNOME's rules; Do Not Disturb is GNOME's own "show banners" setting.
 
 import Gio from 'gi://Gio';
+import Shell from 'gi://Shell';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as MessageTray from 'resource:///org/gnome/shell/ui/messageTray.js';
@@ -257,4 +258,46 @@ export function plainBody(notification) {
 /** The notification's icon, falling back to its app's. */
 export function notificationIcon(notification) {
     return notification.gicon ?? notification.source?.icon ?? null;
+}
+
+/** Activates a notification and focuses its app window. */
+export function activateNotification(item) {
+    if (!item)
+        return;
+    item.activate();
+    try {
+        const appSys = Shell.AppSystem.get_default();
+        const senderName = (item.source?.title || item.title || '').toLowerCase();
+        let app = item.source?.app ??
+            (item.source?.id ? appSys?.lookup_app?.(item.source.id) : null) ??
+            appSys?.get_running?.()?.find(a => {
+                const id = a.get_id?.()?.toLowerCase() ?? '';
+                const name = a.get_name?.()?.toLowerCase() ?? '';
+                return senderName && (id.includes(senderName) || name.includes(senderName) || senderName.includes(name));
+            });
+
+        if (app) {
+            const windows = app.get_windows?.() ?? [];
+            if (windows.length > 0)
+                Main.activateWindow(windows[0]);
+            else
+                app.activate();
+        } else if (item.source?.open) {
+            item.source.open();
+        }
+
+        if (!app || (app.get_windows?.() ?? []).length === 0) {
+            const winActor = global.get_window_actors?.().find(actor => {
+                const win = actor.meta_window;
+                if (!win) return false;
+                const wmClass = (win.get_wm_class?.() || '').toLowerCase();
+                const wmName = (win.get_title?.() || '').toLowerCase();
+                return senderName && (wmClass.includes(senderName) || wmName.includes(senderName) || senderName.includes(wmClass));
+            });
+            if (winActor?.meta_window)
+                Main.activateWindow(winActor.meta_window);
+        }
+    } catch (e) {
+        console.warn(`Isle: could not activate notification app: ${e.message}`);
+    }
 }

@@ -1936,8 +1936,12 @@ export class Controller {
         }
         if (this._island.hovered) {
             this._cancel('collapse');
-            const dodging = this._dodged || (isDodge && this._isAppFullscreen(monitor) && !this._revealedFromTop);
-            if (!dodging && !this._expandWanted && this._settings.get_string('open-on') === 'hover' && !this._alertHoldsHover)
+            const isNotification = this._presentation === 'peek' && this._alert?.kind === 'notification';
+            const dodging = this._presentation === 'compact' &&
+                (this._dodged || (isDodge && this._isAppFullscreen(monitor) && !this._revealedFromTop));
+            const shouldOpen = !dodging && !this._expandWanted && !this._alertHoldsHover &&
+                (this._settings.get_string('open-on') === 'hover' || isNotification);
+            if (shouldOpen)
                 this._expandOnRest();
         } else {
             this._cancel('expand');
@@ -2068,6 +2072,7 @@ export class Controller {
     _openFromClosed() {
         // Clicking a notification opens it, like GNOME's banner did.
         if (!this._expandWanted && this._alert?.onActivate) {
+            this._cancel('expand');
             // Done with: the assistant it may open puts it back in line no more.
             this._alert.answered = true;
             this._alert.onActivate();

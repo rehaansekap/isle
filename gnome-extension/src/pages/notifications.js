@@ -11,7 +11,7 @@ import St from 'gi://St';
 
 import { VERTICAL, px } from '../compat.js';
 import * as Format from '../format.js';
-import { notificationIcon, plainBody } from '../notifications.js';
+import { activateNotification, notificationIcon, plainBody } from '../notifications.js';
 import { Lines, WrapLayout, icon, iconButton, isSymbolic, label, ownIcon, pillButton, setButtonIcon, wrapLines } from '../widgets.js';
 import { Page } from './page.js';
 
@@ -252,11 +252,7 @@ export const NotificationsPage = GObject.registerClass(
             const line = new St.BoxLayout({ style_class: 'isle-notification-line', x_expand: true, y_align: Clutter.ActorAlign.CENTER });
 
             const openApp = () => {
-                notification.activate();
-                if (notification.source?.app?.activate)
-                    notification.source.app.activate();
-                else if (notification.source?.open)
-                    notification.source.open();
+                activateNotification(notification);
                 this.emit('request-close');
             };
 
@@ -385,11 +381,7 @@ export const NotificationsPage = GObject.registerClass(
             titleBox.add_child(title);
             titleButton.set_child(titleBox);
             const openApp = () => {
-                notification.activate();
-                if (notification.source?.app?.activate)
-                    notification.source.app.activate();
-                else if (notification.source?.open)
-                    notification.source.open();
+                activateNotification(notification);
                 this.emit('request-close');
             };
 
