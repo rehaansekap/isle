@@ -602,7 +602,20 @@ export class Controller {
         this._topBar.connect('style-changed', () => this._updateGeometry());
         this._topBar.connect('moved', () => this._updateGeometry());
         this._topBar.connect('calendar-requested', (_bar, page) => this._toggleFromKeyboard(page));
-        this._topBar.connect('panel-visibility-changed', () => {
+        this._topBar.connect('panel-visibility-changed', (_bar, hidden) => {
+            if (!hidden && this._settings.get_string('auto-hide') === 'dodge' && this._presentation === 'compact') {
+                const [pxX, pxY] = global.get_pointer();
+                const monitor = this._monitor;
+                const monitorY = monitor ? monitor.y : 0;
+                const barHeight = this._isOnBar(monitor) ? this._topBar.height : 32;
+                if (pxY <= monitorY + barHeight + 15 &&
+                    pxX >= this._island.x - 40 && pxX <= this._island.x + this._island.width + 40) {
+                    this._dodged = false;
+                    this._stopDodgeWatch();
+                    this._syncAutoHide();
+                    this.expand();
+                }
+            }
             this._syncAutoHide();
             this._syncDimmedState();
         });
@@ -1142,7 +1155,7 @@ export class Controller {
             return GLib.SOURCE_REMOVE;
         }
         const monitor = this._monitor;
-        if (!this._isAppFullscreen(monitor) || this._barHidden(monitor)) {
+        if (!this._isAppFullscreen(monitor)) {
             this._dodged = false;
             this._revealedFromTop = false;
             this._stopDodgeWatch();
@@ -1155,12 +1168,13 @@ export class Controller {
         const monitorY = monitor ? monitor.y : 0;
         const edge = px(REVEAL_EDGE_PX);
 
-        // User intentionally pushed to very top edge directly above island -> reveal
-        if (pxY <= monitorY + edge && pxX >= island.x - 30 && pxX <= island.x + island.width + 30) {
-            this._revealedFromTop = true;
+        // User pushed to top edge barrier above island -> reveal and expand island
+        if (pxY <= monitorY + edge && pxX >= island.x - 40 && pxX <= island.x + island.width + 40) {
+            this._revealedFromTop = false;
             this._dodged = false;
             this._stopDodgeWatch();
             this._syncAutoHide();
+            this.expand();
             return GLib.SOURCE_REMOVE;
         }
 
@@ -1831,13 +1845,16 @@ export class Controller {
         const isDodge = this._settings.get_string('auto-hide') === 'dodge';
         const monitor = this._monitor;
         if (isDodge && this._isAppFullscreen(monitor) && this._presentation === 'compact') {
-            const [, pointerY] = global.get_pointer();
+            const [pointerX, pointerY] = global.get_pointer();
             const monitorY = monitor ? monitor.y : 0;
-            if (pointerY <= monitorY + px(REVEAL_EDGE_PX)) {
-                this._revealedFromTop = true;
+            if (pointerY <= monitorY + px(REVEAL_EDGE_PX) && pointerX >= this._island.x - 40 && pointerX <= this._island.x + this._island.width + 40) {
+                this._revealedFromTop = false;
                 this._dodged = false;
                 this._stopDodgeWatch();
-            } else if (!this._revealedFromTop) {
+                this._syncAutoHide();
+                this.expand();
+                return;
+            } else {
                 this._dodged = true;
                 this._startDodgeWatch();
             }
@@ -1851,8 +1868,9 @@ export class Controller {
             this._leavePointed();
             const [, pointerY] = global.get_pointer();
             const monitorY = monitor ? monitor.y : 0;
-            if (pointerY > monitorY + this._island.height + 25)
+            if (pointerY > monitorY + this._island.height + 25) {
                 this._revealedFromTop = false;
+            }
         }
         // Under the pointer, a hidden island comes back; away, its time to hide starts.
         const wasHidden = this._autoHidden;

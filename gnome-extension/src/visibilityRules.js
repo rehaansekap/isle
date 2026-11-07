@@ -13,13 +13,13 @@ export function autoHide({mode, presentation, visible, hovered, fullscreen, barH
         // Do not dodge or hide when app is not fullscreen / top bar not hidden
         if (!isFullscreen)
             return false;
-        // When top bar is hidden (by autohide topbar), island hides too.
-        // It only appears when autohide topbar appears (or pointer reaches top barrier)
-        if (barHidden)
-            return fromTopEdge ? false : 'now';
-        // When top bar is shown, dodge pointer on hover or stay dodged
+        // When pointer reaches top edge barrier, do not hide (reveals / expands)
+        if (fromTopEdge)
+            return false;
+        // When pointer approaches (dodged or hovered), hide the island
         if (dodged || hovered)
             return 'now';
+        // When pointer is away, keep the compact island shown over fullscreen app
         return false;
     }
     if (fullscreen || (mode === 'top-bar' && barHidden))

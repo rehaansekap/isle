@@ -40,13 +40,15 @@ test('dodge hides when pointer is on island unless from top edge, and alerts sti
     assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: false, barHidden: false, hovered: true}), false);
     assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: false, barHidden: false, dodged: true}), false);
 
-    // Fullscreen / top bar hidden: island hides with top bar, appears from top edge or when bar appears
-    assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: true, barHidden: true, hovered: false}), 'now');
+    // Fullscreen / top bar hidden: island is shown, dodges when approached, reveals from top edge
+    assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: true, barHidden: true, hovered: false, dodged: false}), false);
+    assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: true, barHidden: true, hovered: true}), 'now');
+    assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: true, barHidden: true, dodged: true}), 'now');
     assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: true, barHidden: true, fromTopEdge: true}), false);
     assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: true, barHidden: true, presentation: 'peek'}), false);
 
     // Fullscreen / top bar shown: dodges pointer on hover or stay dodged
-    assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: true, barHidden: false, hovered: false}), false);
+    assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: true, barHidden: false, hovered: false, dodged: false}), false);
     assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: true, barHidden: false, hovered: true}), 'now');
     assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: true, barHidden: false, dodged: true}), 'now');
     assert.equal(autoHide({...closed, mode: 'dodge', fullscreen: true, barHidden: false, hovered: true, presentation: 'peek'}), false);

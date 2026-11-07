@@ -15,16 +15,6 @@
       <summary>Pill style on glass top bar</summary>
       <description>Enclose workspace indicator, grouped tray apps, and system icons in solid black pills when top bar is glass.</description>
     </key>
-    <key name="top-bar-element-style" type="s">
-      <choices>
-        <choice value="transparent"/>
-        <choice value="pill"/>
-        <choice value="island"/>
-      </choices>
-      <default>'pill'</default>
-      <summary>Top bar elements style</summary>
-      <description>Visual style for workspace indicator, grouped tray apps, and system icons: "transparent" (no container), "pill" (rounded ends, 999px), or "island" (rounded box matching dynamic island shape).</description>
-    </key>
     <key name="island-theme" type="s">
       <choices>
         <choice value="black"/>
