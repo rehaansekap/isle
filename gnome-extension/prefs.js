@@ -364,15 +364,19 @@ export default class IslePreferences extends ExtensionPreferences {
         ]));
         look.add(topBarRow(settings, window));
         look.add(blackBesideWindowsRow(settings, window));
-        const glassPillsRow = switchRow(settings, 'glass-pills', 'Pill style on glass top bar',
-            'Enclose workspace, tray apps, and system icons in solid black pills when top bar is glass');
-        look.add(glassPillsRow);
-        const syncGlassPillsSensitivity = () => {
-            glassPillsRow.sensitive = settings.get_string('top-bar-style') === 'glass';
+        const elementStyleRow = choiceRow(settings, 'top-bar-element-style', 'Top bar elements style',
+            'Style for workspace, tray apps, and system icons on top bar', [
+                ['transparent', 'Transparent'],
+                ['pill', 'Pill'],
+                ['island', 'Island (Rounded Box)'],
+            ]);
+        look.add(elementStyleRow);
+        const syncElementStyle = () => {
+            const style = settings.get_string('top-bar-element-style');
+            settings.set_boolean('glass-pills', style !== 'transparent');
         };
-        syncGlassPillsSensitivity();
-        const glassPillsChanged = settings.connect('changed::top-bar-style', syncGlassPillsSensitivity);
-        glassPillsRow.connect('destroy', () => settings.disconnect(glassPillsChanged));
+        const elementStyleChanged = settings.connect('changed::top-bar-element-style', syncElementStyle);
+        elementStyleRow.connect('destroy', () => settings.disconnect(elementStyleChanged));
         look.add(switchRow(settings, 'compact-top-bar', 'Compact top bar', 'Smaller text and spacing in the top bar; slimmer too with the island below it'));
         look.add(switchRow(settings, 'island-in-top-bar', 'Island inside the top bar',
             'Like a notch: the closed island never covers windows'));
@@ -448,6 +452,7 @@ export default class IslePreferences extends ExtensionPreferences {
             ['always', 'Always'],
             ['top-bar', 'With the top bar'],
             ['windows', 'Beside windows'],
+            ['dodge', 'Dodge Pointer'],
         ]));
         // The wait only counts where the island hides on its own: not with a bar that hides.
         const hideDelay = spinRow(settings, 'auto-hide-delay', 'Hide after', 'Seconds without the pointer on the island', 1, 60);

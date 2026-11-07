@@ -35,8 +35,15 @@ test('beside windows, it hides only while a window reaches the top', () => {
     assert.equal(autoHide({...closed, mode: 'windows', windowAtTop: true, hovered: true}), false);
 });
 
+test('dodge hides when pointer is on island unless from top edge, and alerts still show', () => {
+    assert.equal(autoHide({...closed, mode: 'dodge', hovered: false}), false);
+    assert.equal(autoHide({...closed, mode: 'dodge', hovered: true, fromTopEdge: false}), 'now');
+    assert.equal(autoHide({...closed, mode: 'dodge', hovered: true, fromTopEdge: true}), false);
+    assert.equal(autoHide({...closed, mode: 'dodge', hovered: true, presentation: 'peek'}), false);
+});
+
 test('over a full-screen app it hides at once, whatever the mode, and alerts still show', () => {
-    for (const mode of ['off', 'always', 'top-bar', 'windows']) {
+    for (const mode of ['off', 'always', 'top-bar', 'windows', 'dodge']) {
         assert.equal(autoHide({...closed, mode, fullscreen: true}), 'now');
         assert.equal(autoHide({...closed, mode, fullscreen: true, hovered: true}), 'now');
         assert.equal(autoHide({...closed, mode, fullscreen: true, presentation: 'peek'}), false);

@@ -9,11 +9,11 @@ import GObject from 'gi://GObject';
 import Pango from 'gi://Pango';
 import St from 'gi://St';
 
-import {VERTICAL, px} from '../compat.js';
+import { VERTICAL, px } from '../compat.js';
 import * as Format from '../format.js';
-import {notificationIcon, plainBody} from '../notifications.js';
-import {Lines, WrapLayout, icon, iconButton, isSymbolic, label, ownIcon, pillButton, setButtonIcon, wrapLines} from '../widgets.js';
-import {Page} from './page.js';
+import { notificationIcon, plainBody } from '../notifications.js';
+import { Lines, WrapLayout, icon, iconButton, isSymbolic, label, ownIcon, pillButton, setButtonIcon, wrapLines } from '../widgets.js';
+import { Page } from './page.js';
 
 /** A card offers at most this many of its notification's buttons ("Mark as read", "Accept"). */
 const MAX_ACTIONS = 3;
@@ -24,458 +24,471 @@ const BODY_LINES = 3;
 function notificationBadge(gicon) {
     gicon = gicon ? ownIcon(gicon) : icon('dialog-information-symbolic');
     if (!isSymbolic(gicon))
-        return new St.Icon({gicon, icon_size: 20, y_align: Clutter.ActorAlign.CENTER});
+        return new St.Icon({ gicon, icon_size: 20, y_align: Clutter.ActorAlign.CENTER });
     return new St.Bin({
         style_class: 'isle-notification-glyph',
-        child: new St.Icon({gicon, icon_size: 12}),
+        child: new St.Icon({ gicon, icon_size: 12 }),
         y_align: Clutter.ActorAlign.CENTER,
     });
 }
 
 /** The page over `center`, which keeps the notifications and Do Not Disturb. */
 export const NotificationsPage = GObject.registerClass(
-class NotificationsPage extends Page {
-    /** The list itself is built late, on the first warm-up or showing. */
-    _init(daemon, center, {height} = {}) {
-        super._init(daemon, {
-            style_class: 'isle-page isle-notifications',
-            layout_manager: new Clutter.BoxLayout({orientation: Clutter.Orientation.VERTICAL}),
-        });
-        this.name = 'notifications';
-        this._center = center;
+    class NotificationsPage extends Page {
+        /** The list itself is built late, on the first warm-up or showing. */
+        _init(daemon, center, { height } = {}) {
+            super._init(daemon, {
+                style_class: 'isle-page isle-notifications',
+                layout_manager: new Clutter.BoxLayout({ orientation: Clutter.Orientation.VERTICAL }),
+            });
+            this.name = 'notifications';
+            this._center = center;
 
-        this.add_child(this._buildBar());
-        this.add_child(this._buildDndNote());
-        this.add_child(this._buildList());
+            this.add_child(this._buildBar());
+            this.add_child(this._buildDndNote());
+            this.add_child(this._buildList());
 
-        this._centerHandlers = [
-            // Closed, the list is only rebuilt when next shown (see `onActivate`).
-            center.connect('changed', () => this._onListChanged()),
-            // Shown anew but not marked seen: its banner does that once shown (see `acknowledge`).
-            center.connect('updated', () => this._onListChanged({seen: false})),
-            // Seen or not shows only in the tab's dot: the cards stay.
-            center.connect('seen-changed', () => this.emit('news-changed')),
-            center.connect('dnd-changed', () => this._updateDnd()),
-        ];
-        // Notifications expanded by user to show full message text and details.
-        this._expanded = new Set();
-        // Built when first warmed up or shown (see `warmUp`).
-        this._times = [];
-        this._stale = true;
-        this._updateDnd();
-        this.connect('destroy', () => this._onDestroy());
-    }
-
-    /** Unseen notifications make it the page to open on. */
-    get relevant() {
-        return this._center.hasUnseen;
-    }
-
-    /** Unseen ones put a dot on the tab. */
-    get hasNews() {
-        return this._center.hasUnseen;
-    }
-
-    get preferredHeight() {
-        const barHeight = 40 + (this._dndNote?.visible ? 26 : 0);
-        const notifications = this._center?.notifications ?? [];
-        if (notifications.length === 0)
-            return barHeight + 110;
-
-        let listHeight = 0;
-        const children = this._list?.get_children() ?? [];
-        if (children.length > 0) {
-            for (const child of children) {
-                const [, natural] = child.get_preferred_height(-1);
-                listHeight += (natural > 0 ? natural : 38) + 4;
-            }
-        } else {
-            for (const n of notifications) {
-                const key = this._notificationKey(n);
-                listHeight += (this._expanded?.has(key) ? 140 : 38) + 4;
-            }
-        }
-        return Math.max(130, Math.round(barHeight + listHeight + 8));
-    }
-
-    /** How many there are, then Do Not Disturb and Clear All as small round buttons. */
-    _buildBar() {
-        const bar = new St.BoxLayout({style_class: 'isle-notifications-bar'});
-        bar.add_child(label('Notifications', 'isle-notifications-heading', {x_expand: true, y_align: Clutter.ActorAlign.CENTER}));
-        this._dndButton = iconButton('isle-bell', 'isle-button-round isle-button-small isle-dnd-toggle', () => {
-            this._center.dnd = !this._center.dnd;
-        }, {size: 13, accessibleName: 'Do Not Disturb'});
-        this._dndButton.y_align = Clutter.ActorAlign.CENTER;
-        this._clearButton = pillButton('Clear', 'isle-pill-small isle-notifications-clear', () => this._center.clearAll());
-        this._clearButton.y_align = Clutter.ActorAlign.CENTER;
-        bar.add_child(this._dndButton);
-        bar.add_child(this._clearButton);
-        return bar;
-    }
-
-    /** While Do Not Disturb is on, what it does: a moon and a line under the heading. */
-    _buildDndNote() {
-        this._dndNote = new St.BoxLayout({style_class: 'isle-notifications-dnd-note', visible: false});
-        // Dimmed as the line beside it: the moon is drawn white, so its colour can't be set.
-        this._dndNote.add_child(new St.Icon({gicon: icon('isle-moon'), icon_size: 10, opacity: 130, y_align: Clutter.ActorAlign.CENTER}));
-        const text = label('Do Not Disturb: new ones wait here; urgent ones still show', 'isle-notifications-dnd-text',
-            {x_expand: true, y_align: Clutter.ActorAlign.CENTER});
-        text.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-        this._dndNote.add_child(text);
-        return this._dndNote;
-    }
-
-    /** The scrolling list of rows, with "No notifications" in its place when empty. */
-    _buildList() {
-        this._list = new St.BoxLayout({...VERTICAL, style_class: 'isle-notification-list'});
-        this._scroll = new St.ScrollView({
-            style_class: 'isle-notifications-scroll isle-task-scroll',
-            hscrollbar_policy: St.PolicyType.NEVER,
-            // Automatic vertical scrollbar overlaying smoothly on the right
-            vscrollbar_policy: St.PolicyType.AUTOMATIC,
-            overlay_scrollbars: true,
-            x_expand: true,
-            y_expand: true,
-        });
-        this._scroll.set_child(this._list);
-
-        this._empty = new St.BoxLayout({...VERTICAL, style_class: 'isle-empty', x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER, x_expand: true});
-        this._empty.add_child(new St.Icon({gicon: icon('isle-bell'), icon_size: 24, style_class: 'isle-empty-icon', x_align: Clutter.ActorAlign.CENTER}));
-        this._empty.add_child(label('No notifications', 'isle-empty-title', {x_align: Clutter.ActorAlign.CENTER}));
-        this._empty.add_child(label('You’re all caught up', 'isle-empty-hint', {x_align: Clutter.ActorAlign.CENTER}));
-
-        const column = new St.Widget({layout_manager: new Clutter.BinLayout(), x_expand: true, y_expand: true});
-        column.add_child(this._scroll);
-        column.add_child(this._empty);
-        return column;
-    }
-
-    /** Rebuilds now if shown, or marks the list stale for the next showing. */
-    _onListChanged({seen = true} = {}) {
-        if (this.active)
-            this._update({seen});
-        else
+            this._centerHandlers = [
+                // Closed, the list is only rebuilt when next shown (see `onActivate`).
+                center.connect('changed', () => this._onListChanged()),
+                // Shown anew but not marked seen: its banner does that once shown (see `acknowledge`).
+                center.connect('updated', () => this._onListChanged({ seen: false })),
+                // Seen or not shows only in the tab's dot: the cards stay.
+                center.connect('seen-changed', () => this.emit('news-changed')),
+                center.connect('dnd-changed', () => this._updateDnd()),
+            ];
+            // Notifications expanded by user to show full message text and details.
+            this._expanded = new Set();
+            // Built when first warmed up or shown (see `warmUp`).
+            this._times = [];
             this._stale = true;
-        this.markCold();
-        this.emit('news-changed');
-    }
-
-    _notificationKey(notification) {
-        return notification.id ?? `${notification.source?.id || 'app'}:${notification.title || ''}:${notification.datetime?.to_unix?.() || 0}`;
-    }
-
-    /** Rebuilds every row; `seen` false leaves them unread even while shown. */
-    _update({seen = true} = {}) {
-        this._stale = false;
-        /** Each row's "5m ago", with when it came, to bring up to date without a rebuild. */
-        this._times = [];
-        const notifications = this._center.notifications;
-        this._clearButton.visible = notifications.length > 0;
-
-        // Prune any expanded keys that are no longer in notifications
-        const activeKeys = new Set(notifications.map(n => this._notificationKey(n)));
-        for (const key of this._expanded) {
-            if (!activeKeys.has(key))
-                this._expanded.delete(key);
+            this._updateDnd();
+            this.connect('destroy', () => this._onDestroy());
         }
 
-        // Newest first, one row each, as a list to scroll.
-        this._list.destroy_all_children();
-        for (const notification of notifications)
-            this._list.add_child(this._row(notification));
-        this._empty.visible = notifications.length === 0;
-        this._scroll.visible = notifications.length > 0;
+        /** Unseen notifications make it the page to open on. */
+        get relevant() {
+            return this._center.hasUnseen;
+        }
 
-        // Seen while open: no unread dot for something already on screen.
-        if (this.active && seen)
-            this._center.acknowledgeAll();
-        this.emit('height-changed');
-    }
+        /** Unseen ones put a dot on the tab. */
+        get hasNews() {
+            return this._center.hasUnseen;
+        }
 
-    /** The bell turns into a checked moon, and the note shows, while Do Not Disturb is on. */
-    _updateDnd() {
-        const on = this._center.dnd;
-        if (on)
-            this._dndButton.add_style_pseudo_class('checked');
-        else
-            this._dndButton.remove_style_pseudo_class('checked');
-        setButtonIcon(this._dndButton, on ? 'isle-moon' : 'isle-bell');
-        this._dndNote.visible = on;
-    }
+        get preferredHeight() {
+            const barHeight = 40 + (this._dndNote?.visible ? 26 : 0);
+            const notifications = this._center?.notifications ?? [];
+            if (notifications.length === 0)
+                return barHeight + 110;
 
-    /** A row: the app's icon, who, what under it on up to three lines, its buttons, and when; × under the pointer. */
-    _row(notification) {
-        const key = this._notificationKey(notification);
-        const container = new St.BoxLayout({...VERTICAL, style_class: 'isle-notification-row-container', x_expand: true});
-
-        const refreshRow = () => {
-            container.destroy_all_children();
-            const isExpanded = this._expanded.has(key);
-            if (isExpanded) {
-                container.add_child(this._buildExpandedRow(notification, key, () => {
-                    this._expanded.delete(key);
-                    refreshRow();
-                }));
+            let listHeight = 0;
+            const children = this._list?.get_children() ?? [];
+            if (children.length > 0) {
+                for (const child of children) {
+                    const [, natural] = child.get_preferred_height(-1);
+                    listHeight += (natural > 0 ? natural : 38) + 4;
+                }
             } else {
-                container.add_child(this._buildCollapsedRow(notification, key, () => {
-                    this._expanded.add(key);
-                    refreshRow();
-                }));
+                for (const n of notifications) {
+                    const key = this._notificationKey(n);
+                    listHeight += (this._expanded?.has(key) ? 140 : 38) + 4;
+                }
             }
-            this.emit('height-changed');
-        };
+            return Math.max(130, Math.round(barHeight + listHeight + 8));
+        }
 
-        refreshRow();
-        return container;
-    }
+        /** How many there are, then Do Not Disturb and Clear All as small round buttons. */
+        _buildBar() {
+            const bar = new St.BoxLayout({ style_class: 'isle-notifications-bar' });
+            bar.add_child(label('Notifications', 'isle-notifications-heading', { x_expand: true, y_align: Clutter.ActorAlign.CENTER }));
+            this._dndButton = iconButton('isle-bell', 'isle-button-round isle-button-small isle-dnd-toggle', () => {
+                this._center.dnd = !this._center.dnd;
+            }, { size: 13, accessibleName: 'Do Not Disturb' });
+            this._dndButton.y_align = Clutter.ActorAlign.CENTER;
+            this._clearButton = pillButton('Clear', 'isle-pill-small isle-notifications-clear', () => this._center.clearAll());
+            this._clearButton.y_align = Clutter.ActorAlign.CENTER;
+            bar.add_child(this._dndButton);
+            bar.add_child(this._clearButton);
+            return bar;
+        }
 
-    /** Collapsed row: single line summary with ellipsis preview, hover tools, and expand chevron. */
-    _buildCollapsedRow(notification, key, onExpand) {
-        const content = new St.BoxLayout({style_class: 'isle-notification', x_expand: true});
-        const titleText = (notification.title || notification.source?.title || '').replace(/\s+/g, ' ').trim();
-        const rawBody = this._sharing ? '' : plainBody(notification).replace(/\s+/g, ' ').trim();
-        const hasExpandable = rawBody.length > 0;
+        /** While Do Not Disturb is on, what it does: a moon and a line under the heading. */
+        _buildDndNote() {
+            this._dndNote = new St.BoxLayout({ style_class: 'isle-notifications-dnd-note', visible: false });
+            // Dimmed as the line beside it: the moon is drawn white, so its colour can't be set.
+            this._dndNote.add_child(new St.Icon({ gicon: icon('isle-moon'), icon_size: 10, opacity: 130, y_align: Clutter.ActorAlign.CENTER }));
+            const text = label('Do Not Disturb: new ones wait here; urgent ones still show', 'isle-notifications-dnd-text',
+                { x_expand: true, y_align: Clutter.ActorAlign.CENTER });
+            text.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+            this._dndNote.add_child(text);
+            return this._dndNote;
+        }
 
-        const line = new St.BoxLayout({style_class: 'isle-notification-line', x_expand: true, y_align: Clutter.ActorAlign.CENTER});
-
-        const openApp = () => {
-            notification.activate();
-            if (notification.source?.app?.activate)
-                notification.source.app.activate();
-            else if (notification.source?.open)
-                notification.source.open();
-            this.emit('request-close');
-        };
-
-        // App icon & title: clicking activates the notification and opens the app
-        const titleButton = new St.Button({
-            style_class: 'isle-notification-click-area',
-            can_focus: true,
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        const titleBox = new St.BoxLayout({style_class: 'isle-notification-title-box', y_align: Clutter.ActorAlign.CENTER});
-        titleBox.add_child(notificationBadge(notificationIcon(notification)));
-        const titleLabel = label(titleText, 'isle-notification-title');
-        titleLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-        titleBox.add_child(titleLabel);
-        titleButton.set_child(titleBox);
-        titleButton.connect('clicked', () => openApp());
-        line.add_child(titleButton);
-
-        // Body preview: clicking expands the notification to show full message
-        if (hasExpandable) {
-            const bodyButton = new St.Button({
-                style_class: 'isle-notification-body-button',
+        /** The scrolling list of rows, with "No notifications" in its place when empty. */
+        _buildList() {
+            this._list = new St.BoxLayout({ ...VERTICAL, style_class: 'isle-notification-list' });
+            this._scroll = new St.ScrollView({
+                style_class: 'isle-notifications-scroll isle-task-scroll',
+                hscrollbar_policy: St.PolicyType.NEVER,
+                // Only show vertical scrollbar when content actually overflows beyond view
+                vscrollbar_policy: St.PolicyType.NEVER,
+                overlay_scrollbars: true,
                 x_expand: true,
+                y_expand: true,
+            });
+            this._scroll.set_child(this._list);
+
+            const vAdjust = this._scroll.vscroll.adjustment;
+            const updateScrollPolicy = () => {
+                const needsScroll = vAdjust.upper > vAdjust.page_size + 2;
+                const wanted = needsScroll ? St.PolicyType.AUTOMATIC : St.PolicyType.NEVER;
+                if (this._scroll.vscrollbar_policy !== wanted)
+                    this._scroll.vscrollbar_policy = wanted;
+            };
+            vAdjust.connect('changed', updateScrollPolicy);
+
+            this._empty = new St.BoxLayout({ ...VERTICAL, style_class: 'isle-empty', x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER, x_expand: true });
+            this._empty.add_child(new St.Icon({ gicon: icon('isle-bell'), icon_size: 24, style_class: 'isle-empty-icon', x_align: Clutter.ActorAlign.CENTER }));
+            this._empty.add_child(label('No notifications', 'isle-empty-title', { x_align: Clutter.ActorAlign.CENTER }));
+            this._empty.add_child(label('You’re all caught up', 'isle-empty-hint', { x_align: Clutter.ActorAlign.CENTER }));
+
+            const column = new St.Widget({ layout_manager: new Clutter.BinLayout(), x_expand: true, y_expand: true });
+            column.add_child(this._scroll);
+            column.add_child(this._empty);
+            return column;
+        }
+
+        /** Rebuilds now if shown, or marks the list stale for the next showing. */
+        _onListChanged({ seen = true } = {}) {
+            if (this.active)
+                this._update({ seen });
+            else
+                this._stale = true;
+            this.markCold();
+            this.emit('news-changed');
+        }
+
+        _notificationKey(notification) {
+            return notification.id ?? `${notification.source?.id || 'app'}:${notification.title || ''}:${notification.datetime?.to_unix?.() || 0}`;
+        }
+
+        /** Rebuilds every row; `seen` false leaves them unread even while shown. */
+        _update({ seen = true } = {}) {
+            this._stale = false;
+            /** Each row's "5m ago", with when it came, to bring up to date without a rebuild. */
+            this._times = [];
+            const notifications = this._center.notifications;
+            this._clearButton.visible = notifications.length > 0;
+
+            // Prune any expanded keys that are no longer in notifications
+            const activeKeys = new Set(notifications.map(n => this._notificationKey(n)));
+            for (const key of this._expanded) {
+                if (!activeKeys.has(key))
+                    this._expanded.delete(key);
+            }
+
+            // Newest first, one row each, as a list to scroll.
+            this._list.destroy_all_children();
+            for (const notification of notifications)
+                this._list.add_child(this._row(notification));
+            this._empty.visible = notifications.length === 0;
+            this._scroll.visible = notifications.length > 0;
+
+            // Seen while open: no unread dot for something already on screen.
+            if (this.active && seen)
+                this._center.acknowledgeAll();
+            this.emit('height-changed');
+        }
+
+        /** The bell turns into a checked moon, and the note shows, while Do Not Disturb is on. */
+        _updateDnd() {
+            const on = this._center.dnd;
+            if (on)
+                this._dndButton.add_style_pseudo_class('checked');
+            else
+                this._dndButton.remove_style_pseudo_class('checked');
+            setButtonIcon(this._dndButton, on ? 'isle-moon' : 'isle-bell');
+            this._dndNote.visible = on;
+        }
+
+        /** A row: the app's icon, who, what under it on up to three lines, its buttons, and when; × under the pointer. */
+        _row(notification) {
+            const key = this._notificationKey(notification);
+            const container = new St.BoxLayout({ ...VERTICAL, style_class: 'isle-notification-row-container', x_expand: true });
+
+            const refreshRow = () => {
+                container.destroy_all_children();
+                const isExpanded = this._expanded.has(key);
+                if (isExpanded) {
+                    container.add_child(this._buildExpandedRow(notification, key, () => {
+                        this._expanded.delete(key);
+                        refreshRow();
+                    }));
+                } else {
+                    container.add_child(this._buildCollapsedRow(notification, key, () => {
+                        this._expanded.add(key);
+                        refreshRow();
+                    }));
+                }
+                this.emit('height-changed');
+            };
+
+            refreshRow();
+            return container;
+        }
+
+        /** Collapsed row: single line summary with ellipsis preview, hover tools, and expand chevron. */
+        _buildCollapsedRow(notification, key, onExpand) {
+            const content = new St.BoxLayout({ style_class: 'isle-notification', x_expand: true });
+            const titleText = (notification.title || notification.source?.title || '').replace(/\s+/g, ' ').trim();
+            const rawBody = this._sharing ? '' : plainBody(notification).replace(/\s+/g, ' ').trim();
+            const hasExpandable = rawBody.length > 0;
+
+            const line = new St.BoxLayout({ style_class: 'isle-notification-line', x_expand: true, y_align: Clutter.ActorAlign.CENTER });
+
+            const openApp = () => {
+                notification.activate();
+                if (notification.source?.app?.activate)
+                    notification.source.app.activate();
+                else if (notification.source?.open)
+                    notification.source.open();
+                this.emit('request-close');
+            };
+
+            // App icon & title: clicking activates the notification and opens the app
+            const titleButton = new St.Button({
+                style_class: 'isle-notification-click-area',
                 can_focus: true,
                 y_align: Clutter.ActorAlign.CENTER,
             });
-            const bodyLabel = label(rawBody, 'isle-notification-body', {x_expand: true});
-            bodyLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-            bodyButton.set_child(bodyLabel);
-            bodyButton.connect('clicked', () => onExpand());
-            line.add_child(bodyButton);
-        } else {
-            titleLabel.x_expand = true;
-            titleButton.x_expand = true;
-        }
+            const titleBox = new St.BoxLayout({ style_class: 'isle-notification-title-box', y_align: Clutter.ActorAlign.CENTER });
+            titleBox.add_child(notificationBadge(notificationIcon(notification)));
+            const titleLabel = label(titleText, 'isle-notification-title');
+            titleLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+            titleBox.add_child(titleLabel);
+            titleButton.set_child(titleBox);
+            titleButton.connect('clicked', () => openApp());
+            line.add_child(titleButton);
 
-        content.add_child(line);
+            // Body preview: clicking directly opens the app (chevron on right expands)
+            if (hasExpandable) {
+                const bodyButton = new St.Button({
+                    style_class: 'isle-notification-body-button',
+                    x_expand: true,
+                    can_focus: true,
+                    y_align: Clutter.ActorAlign.CENTER,
+                });
+                const bodyLabel = label(rawBody, 'isle-notification-body', { x_expand: true });
+                bodyLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+                bodyButton.set_child(bodyLabel);
+                bodyButton.connect('clicked', () => openApp());
+                line.add_child(bodyButton);
+            } else {
+                titleLabel.x_expand = true;
+                titleButton.x_expand = true;
+            }
 
-        // The time, and in its place under the pointer the ×.
-        const corner = new St.Widget({layout_manager: new Clutter.BinLayout(),
-            y_align: Clutter.ActorAlign.CENTER});
-        const time = label(Format.ago(notification.datetime), 'isle-notification-time', {x_align: Clutter.ActorAlign.END});
-        time.connect('destroy', () => {
-            const idx = this._times.findIndex(([t]) => t === time);
-            if (idx !== -1)
-                this._times.splice(idx, 1);
-        });
-        this._times.push([time, notification.datetime]);
-        corner.add_child(time);
-        // Every one can be put away, a resident one too, as in GNOME's list.
-        const tools = new St.BoxLayout({style_class: 'isle-notification-tools', x_align: Clutter.ActorAlign.END, opacity: 0, visible: false});
-        const actions = this._sharing ? [] : (notification.actions ?? []).slice(0, MAX_ACTIONS);
-        for (const action of actions) {
-            tools.add_child(pillButton(action.label, 'isle-pill-small isle-notification-action', () => {
-                action.activate();
-                this.emit('request-close');
-            }));
-        }
-        if (!notification.resident) {
-            const dismiss = iconButton('isle-close-symbolic', 'isle-button-flat isle-notification-dismiss',
-                () => notification.destroy(), {size: 10, accessibleName: 'Dismiss'});
-            dismiss.y_align = Clutter.ActorAlign.CENTER;
-            tools.add_child(dismiss);
-        }
-        corner.add_child(tools);
-        content.add_child(corner);
+            content.add_child(line);
 
-        // Dedicated chevron button to expand notification
-        if (hasExpandable) {
-            const expandBtn = iconButton('isle-chevron-down-symbolic', 'isle-button-flat isle-notification-expand',
-                () => onExpand(), {size: 12, accessibleName: 'Expand notification'});
-            expandBtn.y_align = Clutter.ActorAlign.CENTER;
-            content.add_child(expandBtn);
-        }
-
-        const row = new St.BoxLayout({
-            style_class: 'isle-notification-row',
-            x_expand: true,
-            reactive: true,
-            track_hover: true,
-        });
-        row.add_child(content);
-
-        if (tools.get_n_children() > 0) {
-            row.connect('notify::hover', () => {
-                tools.show();
-                tools.ease({opacity: row.hover ? 255 : 0, duration: 120,
-                    onComplete: () => (tools.visible = row.hover)});
-                time.ease({opacity: row.hover ? 0 : 255, duration: 120});
+            // The time, and in its place under the pointer the ×.
+            const corner = new St.Widget({
+                layout_manager: new Clutter.BinLayout(),
+                y_align: Clutter.ActorAlign.CENTER
             });
-        }
-        return row;
-    }
-
-    /** Expanded row: full multi-line message body without ellipsis, explicit actions, and collapse chevron. */
-    _buildExpandedRow(notification, key, onCollapse) {
-        const card = new St.BoxLayout({
-            ...VERTICAL,
-            style_class: 'isle-notification-expanded',
-            x_expand: true,
-            reactive: true,
-            track_hover: true,
-        });
-
-        const header = new St.BoxLayout({
-            style_class: 'isle-notification-expanded-header',
-            x_expand: true,
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-
-        const titleText = (notification.title || notification.source?.title || '').trim();
-        const titleButton = new St.Button({
-            style_class: 'isle-notification-click-area',
-            x_expand: true,
-            can_focus: true,
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        const titleBox = new St.BoxLayout({style_class: 'isle-notification-title-box', y_align: Clutter.ActorAlign.CENTER, x_expand: true});
-        titleBox.add_child(notificationBadge(notificationIcon(notification)));
-        const title = label(titleText, 'isle-notification-title', {x_expand: true, y_align: Clutter.ActorAlign.CENTER});
-        title.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-        titleBox.add_child(title);
-        titleButton.set_child(titleBox);
-        const openApp = () => {
-            notification.activate();
-            if (notification.source?.app?.activate)
-                notification.source.app.activate();
-            else if (notification.source?.open)
-                notification.source.open();
-            this.emit('request-close');
-        };
-
-        titleButton.connect('clicked', () => openApp());
-        header.add_child(titleButton);
-
-        const time = label(Format.ago(notification.datetime), 'isle-notification-time', {x_align: Clutter.ActorAlign.END, y_align: Clutter.ActorAlign.CENTER});
-        time.connect('destroy', () => {
-            const idx = this._times.findIndex(([t]) => t === time);
-            if (idx !== -1)
-                this._times.splice(idx, 1);
-        });
-        this._times.push([time, notification.datetime]);
-        header.add_child(time);
-
-        if (!notification.resident) {
-            const dismiss = iconButton('isle-close-symbolic', 'isle-button-flat isle-notification-dismiss',
-                () => notification.destroy(), {size: 10, accessibleName: 'Dismiss'});
-            dismiss.y_align = Clutter.ActorAlign.CENTER;
-            header.add_child(dismiss);
-        }
-
-        const collapseBtn = iconButton('isle-chevron-up-symbolic', 'isle-button-flat isle-notification-expand',
-            () => onCollapse(), {size: 12, accessibleName: 'Collapse notification'});
-        collapseBtn.y_align = Clutter.ActorAlign.CENTER;
-        header.add_child(collapseBtn);
-
-        card.add_child(header);
-
-        // Entire message content with line breaks preserved, full wrapping, and NO ellipsis
-        const rawBody = this._sharing ? '' : plainBody(notification).trim();
-        if (rawBody.length > 0) {
-            const bodyBox = new St.Button({
-                style_class: 'isle-notification-expanded-body-box',
-                x_expand: true,
-                can_focus: true,
+            const time = label(Format.ago(notification.datetime), 'isle-notification-time', { x_align: Clutter.ActorAlign.END });
+            time.connect('destroy', () => {
+                const idx = this._times.findIndex(([t]) => t === time);
+                if (idx !== -1)
+                    this._times.splice(idx, 1);
             });
-            const bodyLabel = label(rawBody, 'isle-notification-expanded-body', {x_expand: true});
-            wrapLines(bodyLabel, Pango.EllipsizeMode.NONE);
-            bodyBox.set_child(bodyLabel);
-            bodyBox.connect('clicked', () => openApp());
-            card.add_child(bodyBox);
-        }
-
-        const actions = this._sharing ? [] : (notification.actions ?? []).slice(0, MAX_ACTIONS);
-        if (actions.length > 0) {
-            const actionsBox = new St.BoxLayout({style_class: 'isle-notification-expanded-actions', x_expand: true});
+            this._times.push([time, notification.datetime]);
+            corner.add_child(time);
+            // Every one can be put away, a resident one too, as in GNOME's list.
+            const tools = new St.BoxLayout({ style_class: 'isle-notification-tools', x_align: Clutter.ActorAlign.END, opacity: 0, visible: false });
+            const actions = this._sharing ? [] : (notification.actions ?? []).slice(0, MAX_ACTIONS);
             for (const action of actions) {
-                actionsBox.add_child(pillButton(action.label, 'isle-pill-small isle-notification-action', () => {
+                tools.add_child(pillButton(action.label, 'isle-pill-small isle-notification-action', () => {
                     action.activate();
                     this.emit('request-close');
                 }));
             }
-            card.add_child(actionsBox);
-        }
+            if (!notification.resident) {
+                const dismiss = iconButton('isle-close-symbolic', 'isle-button-flat isle-notification-dismiss',
+                    () => notification.destroy(), { size: 10, accessibleName: 'Dismiss' });
+                dismiss.y_align = Clutter.ActorAlign.CENTER;
+                tools.add_child(dismiss);
+            }
+            corner.add_child(tools);
+            content.add_child(corner);
 
-        return card;
-    }
+            // Dedicated chevron button to expand notification
+            if (hasExpandable) {
+                const expandBtn = iconButton('isle-chevron-down-symbolic', 'isle-button-flat isle-notification-expand',
+                    () => onExpand(), { size: 12, accessibleName: 'Expand notification' });
+                expandBtn.y_align = Clutter.ActorAlign.CENTER;
+                content.add_child(expandBtn);
+            }
 
-    /** New cards are built ahead while another page is open too. */
-    get warmsOpen() {
-        return true;
-    }
-
-    /** Builds the list ahead, if it is out of date. */
-    warmUp() {
-        if (this._stale)
-            this._update();
-    }
-
-    /** While the screen is shared or recorded, the cards leave out what the notifications say. */
-    set sharing(sharing) {
-        if (sharing === Boolean(this._sharing))
-            return;
-        this._sharing = sharing;
-        if (this.active)
-            this._update();
-        else
-            this._stale = true;
-        this.markCold();
-    }
-
-    /** Opening the page counts as seeing them all. */
-    onActivate() {
-        this._center.acknowledgeAll();
-        // Rebuilt only if something came or went while it was closed; else just the times move on.
-        if (this._stale) {
-            this._update();
-        } else {
-            this._times.forEach(([time, datetime]) => {
-                try {
-                    time.text = Format.ago(datetime);
-                } catch {
-                    // Ignore destroyed actors
-                }
+            const row = new St.BoxLayout({
+                style_class: 'isle-notification-row',
+                x_expand: true,
+                reactive: true,
+                track_hover: true,
             });
-        }
-    }
+            row.add_child(content);
 
-    /** Lets go of the notification center's signals. */
-    _onDestroy() {
-        this._centerHandlers.forEach(id => this._center.disconnect(id));
-        this._times = [];
-        this._expanded.clear();
-    }
-});
+            if (tools.get_n_children() > 0) {
+                row.connect('notify::hover', () => {
+                    tools.show();
+                    tools.ease({
+                        opacity: row.hover ? 255 : 0, duration: 120,
+                        onComplete: () => (tools.visible = row.hover)
+                    });
+                    time.ease({ opacity: row.hover ? 0 : 255, duration: 120 });
+                });
+            }
+            return row;
+        }
+
+        /** Expanded row: full multi-line message body without ellipsis, explicit actions, and collapse chevron. */
+        _buildExpandedRow(notification, key, onCollapse) {
+            const card = new St.BoxLayout({
+                ...VERTICAL,
+                style_class: 'isle-notification-expanded',
+                x_expand: true,
+                reactive: true,
+                track_hover: true,
+            });
+
+            const header = new St.BoxLayout({
+                style_class: 'isle-notification-expanded-header',
+                x_expand: true,
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+
+            const titleText = (notification.title || notification.source?.title || '').trim();
+            const titleButton = new St.Button({
+                style_class: 'isle-notification-click-area',
+                x_expand: true,
+                can_focus: true,
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            const titleBox = new St.BoxLayout({ style_class: 'isle-notification-title-box', y_align: Clutter.ActorAlign.CENTER, x_expand: true });
+            titleBox.add_child(notificationBadge(notificationIcon(notification)));
+            const title = label(titleText, 'isle-notification-title', { x_expand: true, y_align: Clutter.ActorAlign.CENTER });
+            title.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+            titleBox.add_child(title);
+            titleButton.set_child(titleBox);
+            const openApp = () => {
+                notification.activate();
+                if (notification.source?.app?.activate)
+                    notification.source.app.activate();
+                else if (notification.source?.open)
+                    notification.source.open();
+                this.emit('request-close');
+            };
+
+            titleButton.connect('clicked', () => openApp());
+            header.add_child(titleButton);
+
+            const time = label(Format.ago(notification.datetime), 'isle-notification-time', { x_align: Clutter.ActorAlign.END, y_align: Clutter.ActorAlign.CENTER });
+            time.connect('destroy', () => {
+                const idx = this._times.findIndex(([t]) => t === time);
+                if (idx !== -1)
+                    this._times.splice(idx, 1);
+            });
+            this._times.push([time, notification.datetime]);
+            header.add_child(time);
+
+            if (!notification.resident) {
+                const dismiss = iconButton('isle-close-symbolic', 'isle-button-flat isle-notification-dismiss',
+                    () => notification.destroy(), { size: 10, accessibleName: 'Dismiss' });
+                dismiss.y_align = Clutter.ActorAlign.CENTER;
+                header.add_child(dismiss);
+            }
+
+            const collapseBtn = iconButton('isle-chevron-up-symbolic', 'isle-button-flat isle-notification-expand',
+                () => onCollapse(), { size: 12, accessibleName: 'Collapse notification' });
+            collapseBtn.y_align = Clutter.ActorAlign.CENTER;
+            header.add_child(collapseBtn);
+
+            card.add_child(header);
+
+            // Entire message content with line breaks preserved, full wrapping, and NO ellipsis
+            const rawBody = this._sharing ? '' : plainBody(notification).trim();
+            if (rawBody.length > 0) {
+                const bodyBox = new St.Button({
+                    style_class: 'isle-notification-expanded-body-box',
+                    x_expand: true,
+                    can_focus: true,
+                });
+                const bodyLabel = label(rawBody, 'isle-notification-expanded-body', { x_expand: true });
+                wrapLines(bodyLabel, Pango.EllipsizeMode.NONE);
+                bodyBox.set_child(bodyLabel);
+                bodyBox.connect('clicked', () => openApp());
+                card.add_child(bodyBox);
+            }
+
+            const actions = this._sharing ? [] : (notification.actions ?? []).slice(0, MAX_ACTIONS);
+            if (actions.length > 0) {
+                const actionsBox = new St.BoxLayout({ style_class: 'isle-notification-expanded-actions', x_expand: true });
+                for (const action of actions) {
+                    actionsBox.add_child(pillButton(action.label, 'isle-pill-small isle-notification-action', () => {
+                        action.activate();
+                        this.emit('request-close');
+                    }));
+                }
+                card.add_child(actionsBox);
+            }
+
+            return card;
+        }
+
+        /** New cards are built ahead while another page is open too. */
+        get warmsOpen() {
+            return true;
+        }
+
+        /** Builds the list ahead, if it is out of date. */
+        warmUp() {
+            if (this._stale)
+                this._update();
+        }
+
+        /** While the screen is shared or recorded, the cards leave out what the notifications say. */
+        set sharing(sharing) {
+            if (sharing === Boolean(this._sharing))
+                return;
+            this._sharing = sharing;
+            if (this.active)
+                this._update();
+            else
+                this._stale = true;
+            this.markCold();
+        }
+
+        /** Opening the page counts as seeing them all. */
+        onActivate() {
+            this._center.acknowledgeAll();
+            // Rebuilt only if something came or went while it was closed; else just the times move on.
+            if (this._stale) {
+                this._update();
+            } else {
+                this._times.forEach(([time, datetime]) => {
+                    try {
+                        time.text = Format.ago(datetime);
+                    } catch {
+                        // Ignore destroyed actors
+                    }
+                });
+            }
+        }
+
+        /** Lets go of the notification center's signals. */
+        _onDestroy() {
+            this._centerHandlers.forEach(id => this._center.disconnect(id));
+            this._times = [];
+            this._expanded.clear();
+        }
+    });

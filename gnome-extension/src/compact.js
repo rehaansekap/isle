@@ -25,8 +25,8 @@ import {Art, Bars, PrivacyDots, RecordingDot, Ring, icon, restsAt} from './widge
 /** Sizes hanging below the top bar, and inside it with smaller text, in CSS pixels. `clock` is the
  * island with nothing beside the clock, and the least it gets beside an activity. */
 const SIZES = {
-    hanging: {clock: 164, art: 24, artRadius: 6, ring: 20, bars: 16, moon: 14, call: 15, bot: 19.5},
-    inBar: {clock: 144, art: 22, artRadius: 6, ring: 18, bars: 14, moon: 13, call: 14, bot: 17.5},
+    hanging: {clock: 164, activities: 256, art: 24, artRadius: 6, ring: 20, bars: 16, moon: 14, call: 15, bot: 19.5},
+    inBar: {clock: 144, activities: 232, art: 22, artRadius: 6, ring: 18, bars: 14, moon: 13, call: 14, bot: 17.5},
 };
 /** The island's height below the top bar, or in it, until it is laid out (see `vfunc_allocate`); and its
  * corners' radius (COMPACT_RADIUS and IN_BAR_RADIUS in controller.js). */
@@ -244,8 +244,10 @@ export const CompactView = GObject.registerClass({
         const size = SIZES[this._inBar ? 'inBar' : 'hanging'];
         // The clock alone (the island widens for the moon and the day), and no narrower beside an activity.
         const moon = this._moon.visible ? size.moon + MOON_GAP : 0;
-        const clock = this._pill ? PILL_CLOCK[this._inBar ? 'inBar' : 'hanging'] : size.clock;
-        return Math.max(px(clock + moon), this._clockWidth, this._contentWidth);
+        const clock = size.clock;
+        const hasActivity = (this._lead.visible && this._lead.child !== this._dot) || this._right.visible;
+        const minWidth = hasActivity ? px(size.activities) : px(clock + moon);
+        return Math.max(minWidth, this._clockWidth, this._contentWidth);
     }
 
     /** Sizes both sides as wide as the wider (its sign, and its gap to the centre), and finds the width
@@ -315,8 +317,8 @@ export const CompactView = GObject.registerClass({
             return;
         }
         const width = 2 * px(inset) + 2 * (side + gap) + time + moonRoom;
-        // Even, so the centre sits on whole pixels.
-        this._contentWidth = 2 * Math.ceil(width / 2);
+        // Even, so the centre sits on whole pixels, with a minimum width matching v0.7.0.
+        this._contentWidth = Math.max(px(size.activities), 2 * Math.ceil(width / 2));
     }
 
     /** The island's height sets how far in the signs sit: measured again when it changes. */

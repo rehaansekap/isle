@@ -21,13 +21,11 @@ import * as WorldClocks from '../worldClocks.js';
 import {Page} from './page.js';
 import {onHover} from './tasks.js';
 
-/** The month grid's height, shared by its rows: what the page has under the title and weekdays (39 of its
- * 144 inside); sizes in CSS pixels (see `px`). Five weeks fill it, six take smaller days (`isle-cal-six-weeks`).
- * A taller page (Settings → Size) gives the grid its extra height and its days more room
- * (`isle-cal-tall`), rows no taller than TALL_ROW_HEIGHT. */
-const GRID_HEIGHT = 105;
-const MAX_ROW_HEIGHT = 21;
-const STANDARD_PAGE_HEIGHT = 150;
+/** The month grid's height, shared by its rows: what the page has under the title and weekdays;
+ * sizes in CSS pixels (see `px`). Five or six weeks fill it comfortably without clipping. */
+const GRID_HEIGHT = 168;
+const MAX_ROW_HEIGHT = 28;
+const STANDARD_PAGE_HEIGHT = 245;
 const TALL_ROW_HEIGHT = 32;
 /** Events of a desktop calendar with no colour of its own (blue), and Isle's own (orange), as RGB. */
 const SYSTEM_COLOR = [10, 132, 255];
@@ -130,7 +128,6 @@ export const CalendarPage = GObject.registerClass({
         super._init(daemon, {
             style_class: 'isle-page isle-calendar',
             layout_manager: new Clutter.BoxLayout(),
-            height,
         });
         this.name = 'calendar';
         this._gridHeight = GRID_HEIGHT + Math.max(0, (height ?? STANDARD_PAGE_HEIGHT) - STANDARD_PAGE_HEIGHT);
@@ -193,7 +190,7 @@ export const CalendarPage = GObject.registerClass({
     }
 
     get preferredHeight() {
-        const baseHeight = this.pageHeight ?? 245;
+        const baseHeight = 245;
         if (!this._selected || !this.daemon?.state)
             return baseHeight;
         const events = this._eventsOn(this._selected);

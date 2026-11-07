@@ -192,6 +192,27 @@
   height: 22px !important;
 }
 
+/* Island style: rounded box matching dynamic island shape */
+#panel.isle-glass-pills .isle-style-island,
+#panel.isle-glass-pills #panelActivities.isle-style-island,
+#panel.isle-glass-pills .isle-workspace-pill.isle-style-island,
+#panel.isle-glass-pills .isle-tray-pill.isle-style-island,
+#panel.isle-glass-pills .isle-system-pill.isle-style-island,
+#panel.isle-glass-pills #panelSystem.isle-style-island,
+#panel.isle-glass-pills #isleTrayPill.isle-style-island {
+  border-radius: 10px !important;
+}
+
+#panel.isle-glass-pills.isle-compact-bar .isle-style-island,
+#panel.isle-glass-pills.isle-compact-bar #panelActivities.isle-style-island,
+#panel.isle-glass-pills.isle-compact-bar .isle-workspace-pill.isle-style-island,
+#panel.isle-glass-pills.isle-compact-bar .isle-tray-pill.isle-style-island,
+#panel.isle-glass-pills.isle-compact-bar .isle-system-pill.isle-style-island,
+#panel.isle-glass-pills.isle-compact-bar #panelSystem.isle-style-island,
+#panel.isle-glass-pills.isle-compact-bar #isleTrayPill.isle-style-island {
+  border-radius: 8px !important;
+}
+
 /* Crisp icons inside solid black pills */
 #panel.isle-glass-pills #panelActivities,
 #panel.isle-glass-pills .isle-workspace-pill,
@@ -1018,7 +1039,7 @@
 .isle-dnd-toggle:checked:hover { background-color: #6e6cf0; }
 .isle-notifications-dnd-note { spacing: 6px; padding: 0 10px 8px 10px; }
 .isle-notifications-dnd-text { font-size: 12px; color: rgba(255, 255, 255, 0.5); }
-.isle-notification-list { spacing: 6px; padding-bottom: 8px; }
+.isle-notification-list { spacing: 6px; padding-bottom: 8px; margin-right: 8px; }
 
 /* A row each, as a list: the app's icon, who in white and what in grey on one line, then when. */
 .isle-notification-row-container {
@@ -1107,11 +1128,12 @@
 
 /* Vertical scrollbar in notifications list */
 .isle-notifications-scroll {
-  padding-right: 4px;
+  padding-right: 2px;
   -st-vfade-offset: 14px;
 }
 .isle-notifications-scroll StScrollBar {
   padding: 0;
+  margin-left: 6px;
 }
 .isle-notifications-scroll StScrollBar StBin#trough {
   background-color: rgba(255, 255, 255, 0.04);

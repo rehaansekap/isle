@@ -983,6 +983,9 @@ export class Controller {
         const monitor = mirror?.monitor ?? this._monitor;
         const mode = this._settings.get_string('auto-hide');
         const fullscreen = this._overFullscreenOn(monitor);
+        const [, pointerY] = global.get_pointer();
+        const barHeight = this._isOnBar(monitor) && !this._barHidden(monitor) ? this._topBar.height : 0;
+        const fromTopEdge = mode === 'dodge' && (pointerY - (monitor?.y ?? 0) <= Math.max(barHeight, px(REVEAL_EDGE_PX)));
         const when = autoHide({
             mode, fullscreen,
             // A copy shows the island's alert, or else the closed island.
@@ -991,9 +994,9 @@ export class Controller {
             hovered: island.hovered,
             barHidden: mode === 'top-bar' && this._barHidden(monitor),
             windowAtTop: mode === 'windows' && this._windowAtTop(monitor, island),
+            fromTopEdge,
         });
         // A bar another extension hid is not there to point at.
-        const barHeight = this._isOnBar(monitor) && !this._barHidden(monitor) ? this._topBar.height : 0;
         const band = revealBand({mode, fullscreen, barHeight, edge: px(REVEAL_EDGE_PX)});
         return {when, band};
     }

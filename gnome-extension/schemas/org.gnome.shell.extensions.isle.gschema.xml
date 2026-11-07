@@ -15,6 +15,16 @@
       <summary>Pill style on glass top bar</summary>
       <description>Enclose workspace indicator, grouped tray apps, and system icons in solid black pills when top bar is glass.</description>
     </key>
+    <key name="top-bar-element-style" type="s">
+      <choices>
+        <choice value="transparent"/>
+        <choice value="pill"/>
+        <choice value="island"/>
+      </choices>
+      <default>'pill'</default>
+      <summary>Top bar elements style</summary>
+      <description>Visual style for workspace indicator, grouped tray apps, and system icons: "transparent" (no container), "pill" (rounded ends, 999px), or "island" (rounded box matching dynamic island shape).</description>
+    </key>
     <key name="island-theme" type="s">
       <choices>
         <choice value="black"/>
@@ -150,10 +160,11 @@
         <choice value="always"/>
         <choice value="top-bar"/>
         <choice value="windows"/>
+        <choice value="dodge"/>
       </choices>
       <default>'off'</default>
       <summary>Auto-hide the closed island</summary>
-      <description>off: always shown. always: hides once the pointer has been off it a while. top-bar: hides and comes back with a top bar another extension hides. windows: hides while an app's window reaches the top (maximized, tiled or moved up there). Hidden, alerts, the open island and the assistant still show; pointing at its place in the top bar brings it back.</description>
+      <description>off: always shown. always: hides once the pointer has been off it a while. top-bar: hides and comes back with a top bar another extension hides. windows: hides while an app's window reaches the top (maximized, tiled or moved up there). dodge: hides when the pointer approaches it, except during notifications/alerts; reveal from top bar. Hidden, alerts, the open island and the assistant still show; pointing at its place in the top bar brings it back.</description>
     </key>
     <key name="auto-hide-delay" type="i">
       <range min="1" max="60"/>
